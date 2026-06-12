@@ -1,0 +1,124 @@
+name: Kross Deploy
+
+# Builds the app and uploads the prebuilt dist/ straight to Netlify via
+# KrossBuild's ci-deploy-ingest function. Netlify never clones/builds the repo,
+# which permanently avoids the EISDIR build failure class.
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+    inputs:
+      deployment_id:
+        description: "Existing KrossBuild deployment id to reuse (optional)"
+        required: false
+        default: ""
+      mode:
+        description: "Deploy mode: production (publish) or preview (draft)"
+        required: false
+        default: "production"
+
+concurrency:
+  # Preview dispatches are isolated per deployment id so they never cancel an
+  # in-flight production publish (and vice-versa). Push deploys group per ref.
+  group: kross-deploy-${{ github.ref }}-${{ github.event.inputs.deployment_id || 'push' }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Build & Upload Artifact
+    runs-on: ubuntu-latest
+    steps:
+      - name: 🔍 Checkout
+        uses: actions/checkout@v4
+
+      - name: 📦 Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      # Cache Bun's global install cache keyed on the lockfile so repeat builds
+      # (especially rapid preview rebuilds) skip re-downloading dependencies.
+      - name: ♻️ Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('**/bun.lockb', '**/package.json') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
+
+      # Every build step tees its output into build.log so the failure
+      # reporter below can ship the real error text to KrossBuild for
+      # deterministic signature classification + auto-fix. GitHub's default
+      # shell runs with `pipefail`, so tee never masks a non-zero exit.
+      - name: 📥 Install dependencies
+        run: bun install 2>&1 | tee -a build.log
+
+      - name: 🏗️ Build
+        run: bun run build 2>&1 | tee -a build.log
+
+      - name: 🗜️ Zip dist
+        run: |
+          {
+            if [ ! -d dist ]; then echo "::error::dist/ not found after build"; exit 1; fi
+            cd dist && zip -r ../dist.zip . && cd ..
+            echo "Artifact size: $(du -h dist.zip | cut -f1)"
+          } 2>&1 | tee -a build.log
+
+      - name: 🚀 Upload artifact to KrossBuild
+        env:
+          INGEST_URL: ${{ secrets.KROSS_INGEST_URL }}
+          PROJECT_ID: ${{ secrets.KROSS_PROJECT_ID }}
+          DEPLOY_TOKEN: ${{ secrets.KROSS_DEPLOY_TOKEN }}
+          ANON_KEY: ${{ secrets.KROSS_ANON_KEY }}
+        run: |
+          if [ -z "$INGEST_URL" ] || [ -z "$DEPLOY_TOKEN" ]; then
+            echo "::warning::KROSS_* secrets not configured — skipping deploy."
+            exit 0
+          fi
+          echo "Uploading prebuilt artifact to KrossBuild…"
+          HTTP=$(curl -sS -w "%{http_code}" -o response.json -X POST "$INGEST_URL" \
+            -H "apikey: $ANON_KEY" \
+            -H "x-kross-deploy-token: $DEPLOY_TOKEN" \
+            -F "projectId=$PROJECT_ID" \
+            -F "deploymentId=${{ github.event.inputs.deployment_id }}" \
+            -F "mode=${{ github.event.inputs.mode }}" \
+            -F "artifact=@dist.zip")
+          echo "Response ($HTTP):"; cat response.json; echo
+          if [ "$HTTP" -ge 300 ]; then echo "::error::Deploy upload failed"; exit 1; fi
+          echo "✅ Artifact uploaded; KrossBuild is deploying to Netlify."
+
+      # If any earlier step (install/build/zip/upload) failed, tell KrossBuild so
+      # the deployment row flips to `failed` immediately instead of hanging on
+      # `pending` until the watchdog reaps it.
+      - name: 🚨 Report build failure to KrossBuild
+        if: failure()
+        env:
+          INGEST_URL: ${{ secrets.KROSS_INGEST_URL }}
+          PROJECT_ID: ${{ secrets.KROSS_PROJECT_ID }}
+          DEPLOY_TOKEN: ${{ secrets.KROSS_DEPLOY_TOKEN }}
+          ANON_KEY: ${{ secrets.KROSS_ANON_KEY }}
+        run: |
+          if [ -z "$INGEST_URL" ] || [ -z "$DEPLOY_TOKEN" ]; then
+            echo "::warning::KROSS_* secrets not configured — cannot report failure."
+            exit 0
+          fi
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          # Ship the tail of the captured build log so KrossBuild can run
+          # deterministic signature classification and (within the bounded
+          # attempt cap) auto-apply a fix. jq safely JSON-escapes the log.
+          LOG_TAIL="$(tail -c 12000 build.log 2>/dev/null || true)"
+          jq -n \
+            --arg projectId "$PROJECT_ID" \
+            --arg deploymentId "${{ github.event.inputs.deployment_id }}" \
+            --arg reason "GitHub Actions build failed" \
+            --arg runUrl "$RUN_URL" \
+            --arg logs "$LOG_TAIL" \
+            '{projectId:$projectId, deploymentId:$deploymentId, reason:$reason, runUrl:$runUrl, logs:$logs}' \
+            > failure.json
+          curl -sS -X POST "$INGEST_URL" \
+            -H "apikey: $ANON_KEY" \
+            -H "x-kross-deploy-token: $DEPLOY_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data @failure.json || true
+          echo "Reported build failure (with logs) to KrossBuild."
