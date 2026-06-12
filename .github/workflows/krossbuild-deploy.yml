@@ -61,8 +61,9 @@ jobs:
         run: |
           {
             if [ ! -d dist ]; then echo "::error::dist/ not found after build"; exit 1; fi
-            cd dist && zip -r ../dist.zip . && cd ..
-            echo "Artifact size: $(du -h dist.zip | cut -f1)"
+            (cd dist && zip -r "$GITHUB_WORKSPACE/dist.zip" .)
+            if [ ! -f "$GITHUB_WORKSPACE/dist.zip" ]; then echo "::error::dist.zip not created"; exit 1; fi
+            echo "Artifact size: $(du -h "$GITHUB_WORKSPACE/dist.zip" | cut -f1)"
           } 2>&1 | tee -a build.log
 
       - name: 🚀 Upload artifact to KrossBuild
@@ -77,13 +78,16 @@ jobs:
             exit 0
           fi
           echo "Uploading prebuilt artifact to KrossBuild…"
+          if [ ! -f "$GITHUB_WORKSPACE/dist.zip" ]; then
+            echo "::error::dist.zip not found at $GITHUB_WORKSPACE/dist.zip — cannot upload"; exit 1;
+          fi
           HTTP=$(curl -sS -w "%{http_code}" -o response.json -X POST "$INGEST_URL" \
             -H "apikey: $ANON_KEY" \
             -H "x-kross-deploy-token: $DEPLOY_TOKEN" \
             -F "projectId=$PROJECT_ID" \
             -F "deploymentId=${{ github.event.inputs.deployment_id }}" \
             -F "mode=${{ github.event.inputs.mode }}" \
-            -F "artifact=@dist.zip")
+            -F "artifact=@$GITHUB_WORKSPACE/dist.zip")
           echo "Response ($HTTP):"; cat response.json; echo
           if [ "$HTTP" -ge 300 ]; then echo "::error::Deploy upload failed"; exit 1; fi
           echo "✅ Artifact uploaded; KrossBuild is deploying to Netlify."
