@@ -32,6 +32,34 @@ jobs:
       - name: 🔍 Checkout
         uses: actions/checkout@v4
 
+      # Preflight: fail fast (with a clear, classifiable error) when the repo
+      # is empty or only partially pushed. A 0-second "Build" with
+      # "Script not found" almost always means the full file tree never reached
+      # GitHub — catch that here instead of cascading through install/build/zip.
+      - name: 🧪 Preflight — verify repo file tree
+        run: |
+          set -eo pipefail
+          {
+            echo "Verifying repository contents before build…"
+            MISSING=""
+            [ -f package.json ] || MISSING="$MISSING package.json"
+            { [ -f vite.config.ts ] || [ -f vite.config.js ]; } || MISSING="$MISSING vite.config"
+            [ -d src ] || MISSING="$MISSING src/"
+            [ -f index.html ] || MISSING="$MISSING index.html"
+            if [ -n "$MISSING" ]; then
+              echo "::error::Incomplete repo — missing:$MISSING. The full project file tree was not pushed to GitHub. Reconnect GitHub / re-push code, then retry the preview build."
+              echo "Repository root listing:"; ls -la
+              exit 1
+            fi
+            if ! node -e "const s=require('./package.json').scripts||{}; process.exit((s.build||s.dev) ? 0 : 1)" 2>/dev/null; then
+              echo "::error::package.json has no 'build' (or 'dev') script — this does not look like a full Vite project. The complete project was likely not pushed to GitHub. Reconnect GitHub / re-push code, then retry."
+              echo "package.json contents:"; cat package.json
+              exit 1
+            fi
+            FILE_COUNT="$(git ls-files | wc -l | tr -d ' ')"
+            echo "Preflight OK — $FILE_COUNT tracked files, package.json + build script present."
+          } 2>&1 | tee -a build.log
+
       - name: 📦 Setup Bun
         uses: oven-sh/setup-bun@v1
         with:
