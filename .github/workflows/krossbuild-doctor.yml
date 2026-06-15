@@ -1,4 +1,4 @@
-name: KrossBuild Doctor (Architecture V3.0)
+name: Build Doctor
 
 on:
   push:
@@ -7,12 +7,10 @@ on:
     branches: [ main, master, develop ]
 
 jobs:
-  validate:
-    name: Build Validation & Quality Gate
+  build-doctor:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      statuses: write
     
     steps:
     - name: 🔍 Checkout code
@@ -20,10 +18,11 @@ jobs:
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: 📦 Setup Bun
-      uses: oven-sh/setup-bun@v1
+    - name: 📦 Setup Node.js
+      uses: actions/setup-node@v4
       with:
-        bun-version: latest
+        node-version: '20'
+        cache: 'npm'
 
     - name: 🏥 Auto-fix tsconfig.json
       id: fix-tsconfig
@@ -124,70 +123,18 @@ jobs:
         git push
 
     - name: 📥 Install dependencies
-      run: bun install
+      run: npm ci
 
-    - name: 🔧 TypeScript Type Check
-      id: typescript
-      continue-on-error: true
-      run: |
-        echo "Running TypeScript type check..."
-        bunx tsc --noEmit --skipLibCheck || echo "typescript_errors=true" >> $GITHUB_OUTPUT
+    - name: 🏗️ Verify build
+      run: npm run build
 
-    - name: 🏗️ Production Build
-      id: build
-      continue-on-error: true
+    - name: ✅ Build Success
       run: |
-        bun run build || echo "build_failed=true" >> $GITHUB_OUTPUT
-
-    - name: 🚦 Quality Gate Decision
-      id: quality_gate
-      run: |
-        echo "## 🚦 Quality Gate Analysis (Architecture V3.0)" >> $GITHUB_STEP_SUMMARY
+        echo "## ✅ Build Doctor: All Checks Passed" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        
-        FOUNDATION_SCORE=100
-        TYPESCRIPT_SCORE=100
-        BUILD_SCORE=100
-        
-        if [ "${{ steps.typescript.outputs.typescript_errors }}" == "true" ]; then
-          TYPESCRIPT_SCORE=0
-          echo "⚠️ TypeScript validation failed"
-        fi
-        
-        if [ "${{ steps.build.outputs.build_failed }}" == "true" ]; then
-          BUILD_SCORE=0
-          echo "❌ Build failed"
-        fi
-        
-        COMPOSITE=$(echo "scale=2; ($FOUNDATION_SCORE * 0.3) + ($TYPESCRIPT_SCORE * 0.35) + ($BUILD_SCORE * 0.35)" | bc)
-        
-        echo "| Component | Score | Weight | Contribution |" >> $GITHUB_STEP_SUMMARY
-        echo "|-----------|-------|--------|--------------|" >> $GITHUB_STEP_SUMMARY
-        echo "| Foundation | $FOUNDATION_SCORE/100 | 30% | $(echo "$FOUNDATION_SCORE * 0.3" | bc)/30 |" >> $GITHUB_STEP_SUMMARY
-        echo "| TypeScript | $TYPESCRIPT_SCORE/100 | 35% | $(echo "$TYPESCRIPT_SCORE * 0.35" | bc)/35 |" >> $GITHUB_STEP_SUMMARY
-        echo "| Build | $BUILD_SCORE/100 | 35% | $(echo "$BUILD_SCORE * 0.35" | bc)/35 |" >> $GITHUB_STEP_SUMMARY
-        echo "| **Composite** | **$COMPOSITE/100** | - | - |" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        
-        THRESHOLD=65
-        
-        if (( $(echo "$COMPOSITE >= $THRESHOLD" | bc -l) )); then
-          echo "### ✅ QUALITY GATE: PASSED" >> $GITHUB_STEP_SUMMARY
-          echo "Composite score $COMPOSITE >= $THRESHOLD (threshold)" >> $GITHUB_STEP_SUMMARY
-          echo "status=passed" >> $GITHUB_OUTPUT
-        else
-          echo "### 🚫 QUALITY GATE: BLOCKED" >> $GITHUB_STEP_SUMMARY
-          echo "Composite score $COMPOSITE < $THRESHOLD (threshold)" >> $GITHUB_STEP_SUMMARY
-          echo "status=blocked" >> $GITHUB_OUTPUT
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Fix the errors above and push again to retry.**" >> $GITHUB_STEP_SUMMARY
-          exit 1
-        fi
-
-    - name: ✅ Quality Gate Summary
-      if: success()
-      run: |
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "---" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "🎉 **Ready for deployment to Netlify!**" >> $GITHUB_STEP_SUMMARY
+        echo "| Component | Status |" >> $GITHUB_STEP_SUMMARY
+        echo "|-----------|--------|" >> $GITHUB_STEP_SUMMARY
+        echo "| tsconfig.json | ${{ steps.fix-tsconfig.outputs.fixed == 'true' && '🔧 Auto-fixed' || '✅ Valid' }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Build command | ${{ steps.fix-package.outputs.fixed == 'true' && '🔧 Auto-fixed' || '✅ Valid' }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Tailwind config | ${{ steps.fix-tailwind.outputs.fixed == 'true' && '🔧 Auto-fixed' || '✅ Valid' }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Build | ✅ Success |" >> $GITHUB_STEP_SUMMARY
