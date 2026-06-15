@@ -1,0 +1,76 @@
+/* src/index.css */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Light Mode Vibrant Palette */
+  --background-start: hsl(210, 100%, 98%); /* Light energetic blue */
+  --background-end: hsl(280, 100%, 96%); /* Vibrant soft purple */
+  --text-primary: hsl(210, 50%, 20%); /* Dark rich blue */
+  --text-secondary: hsl(210, 30%, 40%); /* Slightly lighter blue */
+  --color-primary: hsl(220, 90%, 55%); /* Bright electric blue */
+  --header-bg: hsla(0, 0%, 100%, 0.8); /* Slightly transparent, glossy white */
+  --header-shadow: 0 4px 6px -1px hsla(0, 0%, 0%, 0.1), 0 2px 4px -1px hsla(0, 0%, 0%, 0.06);
+  --footer-bg: hsla(0, 0%, 100%, 0.7); /* Slightly transparent, glossy white */
+  --footer-shadow: 0 -4px 6px -1px hsla(0, 0%, 0%, 0.1), 0 -2px 4px -1px hsla(0, 0%, 0%, 0.06);
+  --card-bg: hsla(210, 50%, 98%, 0.9); /* Light, ethereal blue */
+  --border-color: hsla(220, 70%, 80%, 0.7);
+  --button-primary-bg: linear-gradient(to right, hsl(220, 90%, 55%), hsl(280, 90%, 65%)); /* Vivid gradient */
+  --button-primary-hover-bg: linear-gradient(to right, hsl(220, 100%, 60%), hsl(280, 100%, 70%));
+  --button-primary-text: hsl(0, 0%, 100%); /* White text for buttons */
+  --hover-bg: hsla(220, 90%, 55%, 0.1); /* Light hover background */
+}
+
+.dark {
+  /* Dark Mode Vibrant Palette */
+  --background-start: hsl(260, 40%, 15%); /* Deep rich purple */
+  --background-end: hsl(160, 40%, 15%); /* Dark vibrant teal */
+  --text-primary: hsl(0, 0%, 95%); /* Bright clean white */
+  --text-secondary: hsl(0, 0%, 75%); /* Slightly darker white */
+  --color-primary: hsl(150, 80%, 50%); /* Neon green */
+  --header-bg: hsla(260, 30%, 10%, 0.8); /* Dark, transparent, glossy black-purple */
+  --header-shadow: 0 4px 6px -1px hsla(0, 0%, 0%, 0.4), 0 2px 4px -1px hsla(0, 0%, 0%, 0.2);
+  --footer-bg: hsla(260, 30%, 10%, 0.7); /* Dark, transparent, glossy black-purple */
+  --footer-shadow: 0 -4px 6px -1px hsla(0, 0%, 0%, 0.4), 0 -2px 4px -1px hsla(0, 0%, 0%, 0.2);
+  --card-bg: hsla(260, 20%, 18%, 0.9); /* Dark sleek dark grey-purple */
+  --border-color: hsla(150, 70%, 40%, 0.5);
+  --button-primary-bg: linear-gradient(to right, hsl(150, 80%, 50%), hsl(220, 80%, 45%)); /* Vibrant gradient */
+  --button-primary-hover-bg: linear-gradient(to right, hsl(150, 90%, 55%), hsl(220, 90%, 50%));
+  --button-primary-text: hsl(0, 0%, 100%); /* White text for buttons */
+  --hover-bg: hsla(150, 80%, 50%, 0.1); /* Dark hover background */
+}
+
+body {
+  font-family: 'Inter', sans-serif;
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+/* Apply glossy/blur effects with backdrop-filter for transparent elements */
+.bg-\[var\(--header-bg\)\] {
+  backdrop-filter: blur(10px);
+}
+
+.bg-\[var\(--footer-bg\)\] {
+  backdrop-filter: blur(8px);
+}
+
+.bg-\[var\(--card-bg\)\] {
+  backdrop-filter: blur(5px);
+}
+
+.shadow-\[var\(--header-shadow\)\] {
+  box-shadow: var(--header-shadow);
+}
+
+.shadow-\[var\(--footer-shadow\)\] {
+  box-shadow: var(--footer-shadow);
+}
+
+/* Ensure smooth transitions for theme changes */
+* {
+  transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease, background 0.3s ease;
+}
