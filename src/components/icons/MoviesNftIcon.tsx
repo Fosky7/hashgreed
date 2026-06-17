@@ -57,40 +57,16 @@ const MoviesNftIcon: React.FC<MoviesNftIconProps> = ({
         strokeLinejoin="round"
         strokeLinecap="round"
       />
-      <path
-        d="M3.6 12L28.4 12L29 10.2C29.2 9.4 28.7 8.6 27.9 8.4L8.9 4.3C8.1 4.1 7.3 4.6 7.1 5.4L6.4 6.4"
-        stroke="currentColor"
-        strokeWidth="1.6"
-        strokeLinejoin="round"
-        strokeLinecap="round"
-      />
-
-      {/* Play triangle on the board */}
-      <path
-        d="M13.5 16.8L20 20L13.5 23.2V16.8Z"
-        fill="currentColor"
-        opacity="0.85"
-      />
 
       {/* NFT hexagon badge */}
       <path
-        d="M25.5 18.2L28.6 20V23.6L25.5 25.4L22.4 23.6V20L25.5 18.2Z"
+        d="M24.5 17.5L27 19V22L24.5 23.5L22 22V19L24.5 17.5Z"
         fill="currentColor"
+        opacity="0.25"
         stroke="currentColor"
-        strokeWidth="1.1"
+        strokeWidth="1.4"
         strokeLinejoin="round"
       />
-      <text
-        x="25.5"
-        y="23"
-        textAnchor="middle"
-        fontSize="3.4"
-        fontWeight="700"
-        fill="var(--card-bg, #ffffff)"
-        fontFamily="system-ui, sans-serif"
-      >
-        N
-      </text>
     </svg>
   );
 };
