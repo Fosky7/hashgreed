@@ -1,8 +1,21 @@
 // src/lib/blockchain/kross/assets.ts
-import { issue, transfer, invokeScript } from '@waves/waves-transactions';
+//
+// @waves/waves-transactions evaluates Node globals at import time. We import
+// it lazily (after polyfills) inside each signing function to avoid the
+// boot-time crash, instead of a static top-level import.
+import './polyfills';
 import { KROSS_CONFIG, toWavelets } from './config';
 import { isValidKrossAddress } from './sdk';
 import { resolveSeed } from './resolve-seed';
+
+async function loadTx() {
+  const mod: any = await import('@waves/waves-transactions');
+  return {
+    issue: mod.issue ?? mod.default?.issue,
+    transfer: mod.transfer ?? mod.default?.transfer,
+    invokeScript: mod.invokeScript ?? mod.default?.invokeScript,
+  };
+}
 
 export interface IssueResult {
   assetId: string;

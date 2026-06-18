@@ -1,5 +1,7 @@
 // src/App.tsx
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+// Install Node-global polyfills BEFORE any blockchain SDK module evaluates.
+import '@/lib/blockchain/kross/polyfills';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { KrossWalletProvider } from '@/lib/blockchain/kross/WalletProvider';
 import { RequireWallet } from '@/components/wallet/RequireWallet';
 
@@ -12,6 +14,7 @@ import IssueToken from '@/pages/IssueToken';
 import Marketplace from '@/pages/Marketplace';
 import ExploreHome from '@/pages/ExploreHome';
 import CategoryExplore from '@/pages/CategoryExplore';
+import HomePage from '@/pages/index';
 import { UnlockGate } from '@/components/wallet/UnlockGate';
 
 export default function App() {
@@ -19,6 +22,9 @@ export default function App() {
     <KrossWalletProvider>
       <BrowserRouter>
         <Routes>
+          {/* Default landing — redirect root to the public explore page so #root always renders */}
+          <Route path="/" element={<HomePage />} />
+
           {/* Public onboarding */}
           <Route path="/wallet/onboarding" element={<WalletOnboarding />} />
 
@@ -83,6 +89,9 @@ export default function App() {
               </RequireWallet>
             }
           />
+
+          {/* Fallback: any unmatched path renders the explore landing instead of an empty page */}
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>
     </KrossWalletProvider>

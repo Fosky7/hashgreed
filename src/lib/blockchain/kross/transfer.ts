@@ -1,5 +1,9 @@
 // src/lib/blockchain/kross/transfer.ts
-import { transfer } from '@waves/waves-transactions';
+//
+// @waves/waves-transactions touches Node globals at import time, so it is
+// loaded lazily (after polyfills) inside the signing function instead of via
+// a static top-level import.
+import './polyfills';
 import { KROSS_CONFIG, toWavelets } from './config';
 import { isValidKrossAddress } from './sdk';
 import { resolveSeed } from './resolve-seed';

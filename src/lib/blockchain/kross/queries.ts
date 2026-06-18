@@ -1,5 +1,82 @@
 // src/lib/blockchain/kross/queries.ts
-import { KROSS_CONFIG, fromWavelets } from './config';
+//
+// READ layer for the Kross chain.
+//
+// Per the Kross SDK (https://decentralizedafrica.com/sdk), responsibilities are
+// split between two kinds of endpoints:
+//   - READ  (aggregated/indexed data: balances, asset lists, tx history)
+//       -> the indexed Explorer API at https://krossexplorer.com/api
+//   - WRITE (transaction broadcast)
+//       -> one of the RPC nodes (nodes / nodes2 / nodes3 .krossexplorer.com)
+//
+// This file performs ONLY reads, so every request below is routed through the
+// API base. Write/broadcast paths live in transfer.ts / assets.ts and target
+// the RPC nodes — they are intentionally NOT touched here.
+import { fromWavelets } from './config';
+
+/**
+ * Resolve the read-only API base URL.
+ * Prefers the SDK-specified `apiUrl` (Part 1 config). Falls back to deriving
+ * it from the explorer URL, then finally to the legacy single node URL so the
+ * module keeps working regardless of which config revision is live.
+ */
+function getApiUrl(): string {
+  const cfg = KROSS_CONFIG as unknown as {
+    apiUrl?: string;
+    explorerUrl?: string;
+    nodeUrl?: string;
+  };
+  if (cfg.apiUrl) return cfg.apiUrl.replace(/\/+$/, '');
+  if (cfg.explorerUrl) return `${cfg.explorerUrl.replace(/\/+$/, '')}/api`;
+  return (cfg.nodeUrl ?? '').replace(/\/+$/, '');
+}
+
+/**
+ * Resolve the ordered list of node URLs for read failover.
+ * Prefers the SDK-specified `nodeUrls` array (Part 1 config) and falls back to
+ * the legacy single `nodeUrl` string.
+ */
+function getNodeUrls(): string[] {
+  const cfg = KROSS_CONFIG as unknown as {
+    nodeUrls?: string[];
+    nodeUrl?: string;
+  };
+  if (Array.isArray(cfg.nodeUrls) && cfg.nodeUrls.length > 0) {
+    return cfg.nodeUrls.map((u) => u.replace(/\/+$/, ''));
+  }
+  return cfg.nodeUrl ? [cfg.nodeUrl.replace(/\/+$/, '')] : [];
+}
+
+/**
+ * Read-only fetch helper.
+ *
+ * Strategy:
+ *   1. Try the indexed API base (SDK-preferred for reads).
+ *   2. On network/HTTP failure, fall back across the RPC nodes for the same
+ *      read-compatible path so a single endpoint outage doesn't break the UI.
+ *
+ * `path` must be the endpoint suffix WITHOUT a leading slash, e.g.
+ * `addresses/balance/3K...`.
+ */
+async function apiFetch(path: string): Promise<Response> {
+  const suffix = path.replace(/^\/+/, '');
+  const bases = [getApiUrl(), ...getNodeUrls()].filter(Boolean);
+  let lastError: unknown = null;
+
+  for (const base of bases) {
+    try {
+      const res = await fetch(`${base}/${suffix}`);
+      if (res.ok) return res;
+      lastError = new Error(`Request failed (${res.status}) at ${base}`);
+    } catch (e) {
+      lastError = e;
+    }
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error('All Kross read endpoints failed.');
+}
 
 export interface KrossAsset {
   assetId: string;
@@ -22,26 +99,26 @@ export interface KrossTx {
 
 /**
  * Fetch native KSS balance (converted from wavelets).
+ * READ -> indexed API base (with node failover).
  */
 export async function getKssBalance(address: string): Promise<number> {
-  const res = await fetch(
-    `${KROSS_CONFIG.nodeUrl}/addresses/balance/${address}`
-  );
-  if (!res.ok) throw new Error('Failed to fetch KSS balance');
-  const data = await res.json();
-  return fromWavelets(data.balance);
+  if (!address) return 0;
+  const res = await apiFetch(`addresses/balance/${address}`);
+  const data = await res.json().catch(() => ({}));
+  const raw = typeof data?.balance === 'number' ? data.balance : 0;
+  return fromWavelets(raw);
 }
 
 /**
  * Fetch all token/NFT balances held by the address.
+ * READ -> indexed API base (with node failover).
  */
 export async function getAssets(address: string): Promise<KrossAsset[]> {
-  const res = await fetch(
-    `${KROSS_CONFIG.nodeUrl}/assets/balance/${address}`
-  );
-  if (!res.ok) throw new Error('Failed to fetch assets');
-  const data = await res.json();
-  return (data.balances ?? []).map((b: any) => {
+  if (!address) return [];
+  const res = await apiFetch(`assets/balance/${address}`);
+  const data = await res.json().catch(() => ({}));
+  const balances = Array.isArray(data?.balances) ? data.balances : [];
+  return balances.map((b: any) => {
     const decimals = b.issueTransaction?.decimals ?? 0;
     const quantity = b.issueTransaction?.quantity ?? b.balance;
     const isNFT = decimals === 0 && quantity === 1;
@@ -57,17 +134,23 @@ export async function getAssets(address: string): Promise<KrossAsset[]> {
 
 /**
  * Fetch recent transactions for the address.
+ * READ -> indexed API base (with node failover).
  */
 export async function getTransactions(
   address: string,
   limit = 25
 ): Promise<KrossTx[]> {
-  const res = await fetch(
-    `${KROSS_CONFIG.nodeUrl}/transactions/address/${address}/limit/${limit}`
+  if (!address) return [];
+  const res = await apiFetch(
+    `transactions/address/${address}/limit/${limit}`
   );
-  if (!res.ok) throw new Error('Failed to fetch transactions');
-  const data = await res.json();
-  const list = Array.isArray(data?.[0]) ? data[0] : [];
+  const data = await res.json().catch(() => ([] as unknown));
+  // The transactions endpoint returns a nested array: [[...txs]].
+  const list = Array.isArray((data as any)?.[0])
+    ? (data as any)[0]
+    : Array.isArray(data)
+    ? (data as any)
+    : [];
   return list.map((tx: any): KrossTx => {
     const isOut = tx.sender === address;
     const isIn = tx.recipient === address;
