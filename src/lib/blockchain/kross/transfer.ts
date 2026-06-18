@@ -8,6 +8,15 @@ import { KROSS_CONFIG, toWavelets } from './config';
 import { isValidKrossAddress } from './sdk';
 import { resolveSeed } from './resolve-seed';
 
+// Lazily load @waves/waves-transactions (post-polyfill, browser-safe).
+// NEVER statically import it at the top of this file.
+async function loadTx() {
+  const mod: any = await import('@waves/waves-transactions');
+  return {
+    transfer: mod.transfer ?? mod.default?.transfer,
+  };
+}
+
 export interface TransferResult {
   id: string;
   explorerUrl: string;
@@ -47,6 +56,7 @@ export async function transferKSS(params: {
 
   const seed = await resolveSeed(password);
 
+  const { transfer } = await loadTx();
   const signedTx = transfer(
     {
       recipient,

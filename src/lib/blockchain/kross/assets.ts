@@ -1,8 +1,8 @@
-import { massTransfer, issue, burn, reissue } from 'waves-transactions';
-//
 // @waves/waves-transactions evaluates Node globals at import time. We import
 // it lazily (after polyfills) inside each signing function to avoid the
-// boot-time crash, instead of a static top-level import.
+// boot-time crash, instead of a static top-level import. Do NOT add a static
+// import of '@waves/waves-transactions' (or the bare 'waves-transactions')
+// at the top of this file — it will break the build and crash at boot.
 import './polyfills';
 import { KROSS_CONFIG, toWavelets } from './config';
 import { isValidKrossAddress } from './sdk';
@@ -52,6 +52,7 @@ export async function createNFT(params: {
   const seed = await resolveSeed(password);
   const metadata = JSON.stringify({ description, image: imageUrl });
 
+  const { issue } = await loadTx();
   const signedTx = issue(
     {
       name: name.slice(0, 16),
@@ -90,6 +91,7 @@ export async function createAssetToken(params: {
 
   const seed = await resolveSeed(password);
 
+  const { issue } = await loadTx();
   const signedTx = issue(
     {
       name: name.slice(0, 16),
@@ -125,6 +127,7 @@ export async function transferNFT(params: {
   }
   const seed = await resolveSeed(password);
 
+  const { transfer } = await loadTx();
   const signedTx = transfer(
     {
       recipient,
@@ -166,6 +169,7 @@ export async function invokeMarketplace(params: {
       ? [{ assetId: paymentAssetId ?? null, amount: toWavelets(paymentKSS) }]
       : [];
 
+  const { invokeScript } = await loadTx();
   const signedTx = invokeScript(
     {
       dApp,
