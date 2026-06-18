@@ -1,4 +1,4 @@
-// src/lib/blockchain/kross/assets.ts
+import { massTransfer, issue, burn, reissue } from 'waves-transactions';
 //
 // @waves/waves-transactions evaluates Node globals at import time. We import
 // it lazily (after polyfills) inside each signing function to avoid the
