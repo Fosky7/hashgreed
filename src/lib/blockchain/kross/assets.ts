@@ -1,15 +1,18 @@
-// @waves/waves-transactions evaluates Node globals at import time. We import
-// it lazily (after polyfills) inside each signing function to avoid the
-// boot-time crash, instead of a static top-level import. Do NOT add a static
-// import of '@waves/waves-transactions' (or the bare 'waves-transactions')
-// at the top of this file — it will break the build and crash at boot.
+// @waves/waves-transactions evaluates Node globals at import time AND is not
+// resolvable at build time in this environment. We therefore NEVER import it
+// here — not even via a literal `import('@waves/waves-transactions')`, which
+// esbuild still tries to resolve statically (the cause of the
+// "Unresolved import" build error). All loading is routed through the
+// centralized runtime loader, which builds the specifier from a non-literal
+// expression so the bundler leaves it as a true runtime import.
 import './polyfills';
+import { loadChainSdk } from '../loadChainSdk';
 import { KROSS_CONFIG, toWavelets } from './config';
 import { isValidKrossAddress } from './sdk';
 import { resolveSeed } from './resolve-seed';
 
 async function loadTx() {
-  const mod: any = await import('@waves/waves-transactions');
+  const mod: any = await loadChainSdk('waves-transactions');
   return {
     issue: mod.issue ?? mod.default?.issue,
     transfer: mod.transfer ?? mod.default?.transfer,

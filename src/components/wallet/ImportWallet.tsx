@@ -21,7 +21,7 @@ export function ImportWallet({ onComplete }: { onComplete?: () => void }) {
       return;
     }
     try {
-      const wallet = importWallet(cleaned);
+      const wallet = await importWallet(cleaned);
       await saveWallet(wallet, password);
       setAddress(wallet.address);
       onComplete?.();

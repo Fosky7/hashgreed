@@ -13,8 +13,8 @@ export function CreateWallet({ onComplete }: { onComplete?: () => void }) {
   const [error, setError] = useState('');
   const [acknowledged, setAcknowledged] = useState(false);
 
-  const handleGenerate = () => {
-    const w = createWallet();
+  const handleGenerate = async () => {
+    const w = await createWallet();
     setWallet(w);
     setStep('reveal');
   };

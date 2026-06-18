@@ -5,12 +5,15 @@
 // statically import it here. It is loaded lazily inside the async derivation
 // path, after './polyfills' has installed the globals.
 import './polyfills';
+import { loadChainSdk } from '../loadChainSdk';
 import { KROSS_CONFIG } from './config';
 import { SEED_WORD_LIST } from './word-list';
 
-// Lazily import the crypto lib only when actually deriving a wallet.
+// Lazily load the crypto lib via the centralized runtime loader so esbuild
+// never tries to resolve '@waves/ts-lib-crypto' at build time and so the
+// Node-global polyfills are guaranteed to be installed first.
 async function loadCrypto() {
-  const mod: any = await import('@waves/ts-lib-crypto');
+  const mod: any = await loadChainSdk('ts-lib-crypto');
   const address = mod.address ?? mod.default?.address;
   const publicKey = mod.publicKey ?? mod.default?.publicKey;
   const privateKey = mod.privateKey ?? mod.default?.privateKey;
@@ -32,33 +35,41 @@ export interface KrossWallet {
 }
 
 /**
- * Generate a 15-word seed phrase from the Kross/Waves word list.
- * NOTE: seed material must only be handled inside this SDK layer,
- * never passed raw through React components.
+ * Generate a 15-word seed phrase from the bundled Kross/Waves word list.
+ * Uses the platform CSPRNG (crypto.getRandomValues) so no external SDK call
+ * is required for generation. NOTE: seed material must only be handled inside
+ * this SDK layer, never passed raw through React components.
  */
 function generateSeedPhrase(): string {
-  // generateNewSeed produces a valid 15-word Waves/Kross seed phrase.
-  // Seed material stays confined to this SDK layer.
-  return generateNewSeed(15).trim().replace(/\s+/g, ' ');
+  const words: string[] = [];
+  const rng = globalThis.crypto;
+  for (let i = 0; i < 15; i++) {
+    const arr = new Uint32Array(1);
+    rng.getRandomValues(arr);
+    const idx = arr[0] % seedWordList.length;
+    words.push(seedWordList[idx]);
+  }
+  return words.join(' ');
 }
 
 /**
  * Derive all wallet credentials from a seed phrase for the Kross chain.
+ * Crypto helpers are loaded lazily (post-polyfill, build-safe), so this is async.
  */
-function deriveWallet(seedPhrase: string): KrossWallet {
-  const addr = deriveAddress(seedPhrase, KROSS_CONFIG.chainId);
+async function deriveWallet(seedPhrase: string): Promise<KrossWallet> {
+  const { address, publicKey, privateKey } = await loadCrypto();
   return {
     seedPhrase,
-    privateKey: derivePrivateKey(seedPhrase),
-    publicKey: derivePublicKey(seedPhrase),
-    address: addr,
+    privateKey: privateKey(seedPhrase),
+    publicKey: publicKey(seedPhrase),
+    address: address(seedPhrase, KROSS_CONFIG.chainId),
   };
 }
 
 /**
  * Create a brand new Kross wallet (15-word seed, 3K address).
  */
-export function createWallet(): KrossWallet {
+export async function createWallet(): Promise<KrossWallet> {
   const seedPhrase = generateSeedPhrase();
   return deriveWallet(seedPhrase);
 }
@@ -66,7 +77,7 @@ export function createWallet(): KrossWallet {
 /**
  * Import / restore a Kross wallet from an existing 15-word seed phrase.
  */
-export function importWallet(seedPhrase: string): KrossWallet {
+export async function importWallet(seedPhrase: string): Promise<KrossWallet> {
   const trimmed = seedPhrase.trim().replace(/\s+/g, ' ');
   if (!isValidSeedPhrase(trimmed)) {
     throw new Error('Invalid seed phrase. Expected 15 words.');

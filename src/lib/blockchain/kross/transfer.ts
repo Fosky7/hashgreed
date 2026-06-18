@@ -1,17 +1,18 @@
 // src/lib/blockchain/kross/transfer.ts
 //
-// @waves/waves-transactions touches Node globals at import time, so it is
-// loaded lazily (after polyfills) inside the signing function instead of via
-// a static top-level import.
+// @waves/waves-transactions touches Node globals at import time AND is not
+// resolvable at build time. It is loaded through the centralized runtime
+// loader (non-literal specifier) so esbuild does not try to resolve it at
+// build time. NEVER use a literal import('@waves/waves-transactions') here.
 import './polyfills';
+import { loadChainSdk } from '../loadChainSdk';
 import { KROSS_CONFIG, toWavelets } from './config';
 import { isValidKrossAddress } from './sdk';
 import { resolveSeed } from './resolve-seed';
 
 // Lazily load @waves/waves-transactions (post-polyfill, browser-safe).
-// NEVER statically import it at the top of this file.
 async function loadTx() {
-  const mod: any = await import('@waves/waves-transactions');
+  const mod: any = await loadChainSdk('waves-transactions');
   return {
     transfer: mod.transfer ?? mod.default?.transfer,
   };
