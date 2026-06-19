@@ -3,8 +3,8 @@
   "chainId": "kross-mainnet",
   "chainType": "kross",
   "language": "ride",
-  "securityScore": 0,
+  "securityScore": 48,
   "version": "1.0.0",
-  "createdAt": "2026-06-19T07:00:47.925Z",
-  "updatedAt": "2026-06-19T07:00:47.925Z"
+  "createdAt": "2026-06-19T22:02:05.596Z",
+  "updatedAt": "2026-06-19T22:02:05.596Z"
 }
