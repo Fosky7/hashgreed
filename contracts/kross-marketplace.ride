@@ -1,0 +1,341 @@
+# contracts/kross-marketplace.ride
+{-# STDLIB_VERSION 6 #-}
+{-# CONTENT_TYPE DAPP #-}
+{-# SCRIPT_TYPE ACCOUNT #-}
+
+# ===== Kross NFT Marketplace (RIDE v6) =====
+# Native coin: KSS
+# Escrow-based listings with atomic settlement and fee governance
+
+# =====================================================================
+# >>> REPLACE THESE PLACEHOLDERS WITH YOUR REAL KROSS (3K...) ADDRESSES <<<
+# Kross mainnet addresses are base58 and start with the "3K" prefix.
+# These are the ONLY two lines you must edit before deployment.
+# ---------------------------------------------------------------------
+let OWNER_ADDRESS_PLACEHOLDER     = "3KOwnerAddressReplaceMeXXXXXXXXXXXXXX"   # contract admin / deployer
+let FEE_WALLET_ADDRESS_PLACEHOLDER = "3KFeeWalletReplaceMeXXXXXXXXXXXXXXXXX"   # platform fee wallet
+# =====================================================================
+
+# Fixed creator royalty paid to the NFT issuer on EVERY sale, forever.
+let ROYALTY_BP = 250   # 2.5% (250 / 10000)
+
+# ---------- Keys ----------
+let OWNER_KEY      = "owner"
+let FEE_BP_KEY     = "feeBasisPoints"   # e.g. 250 = 2.5%
+let FEE_WALLET_KEY = "feeWallet"
+let ROYALTY_BP_KEY = "royaltyBasisPoints" # 250 = 2.5% creator royalty
+let MAX_FEE_BP     = 1000               # cap fee at 10%
+let MAX_ROYALTY_BP = 1000               # cap royalty at 10%
+
+# ---------- Helpers ----------
+func ownerAddress() = {
+  let stored = getString(this, OWNER_KEY)
+  match stored {
+    case s: String => addressFromStringValue(s)
+    case _ => Address(base58'')
+  }
+}
+
+func feeBasisPoints() = match getInteger(this, FEE_BP_KEY) {
+  case i: Int => i
+  case _ => 250
+}
+
+func feeWallet() = match getString(this, FEE_WALLET_KEY) {
+  case s: String => addressFromStringValue(s)
+  case _ => addressFromStringValue(FEE_WALLET_ADDRESS_PLACEHOLDER)
+}
+
+# Resolve the original creator (issuer) of an NFT directly on-chain.
+# On Waves/Kross every asset carries its issuer public key immutably,
+# so royalties follow the NFT across every future sale automatically.
+func creatorAddress(assetIdStr: String) = {
+  match assetInfo(fromBase58String(assetIdStr)) {
+    case a: Asset => Address(addressFromPublicKey(a.issuerPublicKey).bytes)
+    case _ => addressFromStringValue(OWNER_ADDRESS_PLACEHOLDER)
+  }
+}
+
+func royaltyBasisPoints() = match getInteger(this, ROYALTY_BP_KEY) {
+  case i: Int => i
+  case _ => 250                          # default 2.5%
+}
+
+func royaltyBasisPoints() = match getInteger(this, ROYALTY_BP_KEY) {
+  case i: Int => i
+  case _ => 250                          # default 2.5%
+}
+
+func listingPriceKey(assetId: String)    = "listing_" + assetId + "_price"
+func listingSellerKey(assetId: String)   = "listing_" + assetId + "_seller"
+func listingCategoryKey(assetId: String) = "listing_" + assetId + "_category"
+
+func isListed(assetId: String) = isDefined(getInteger(this, listingPriceKey(assetId)))
+
+# Shared escrow writer: persist price + seller (+ optional category) for a listing.
+func writeListing(assetId: String, price: Int, seller: String, category: String) = [
+  IntegerEntry(listingPriceKey(assetId), price),
+  StringEntry(listingSellerKey(assetId), seller),
+  StringEntry(listingCategoryKey(assetId), category)
+]
+
+# Shared cleanup: remove every key associated with a listing atomically.
+func clearListing(assetId: String) = [
+  DeleteEntry(listingPriceKey(assetId)),
+  DeleteEntry(listingSellerKey(assetId)),
+  DeleteEntry(listingCategoryKey(assetId))
+]
+
+# ---------- Initialization ----------
+@Callable(i)
+func init(feeWalletStr: String, feeBp: Int, royaltyBp: Int) = {
+  if (isDefined(getString(this, OWNER_KEY))) then
+    throw("Already initialized")
+  else if (feeBp < 0 || feeBp > MAX_FEE_BP) then
+    throw("Fee out of range: 0.." + MAX_FEE_BP.toString())
+  else if (royaltyBp < 0 || royaltyBp > MAX_ROYALTY_BP) then
+    throw("Royalty out of range: 0.." + MAX_ROYALTY_BP.toString())
+  else {
+    let caller = i.caller.toString()
+    [
+      StringEntry(OWNER_KEY, caller),
+      StringEntry(FEE_WALLET_KEY, feeWalletStr),
+      IntegerEntry(FEE_BP_KEY, feeBp),
+      IntegerEntry(ROYALTY_BP_KEY, royaltyBp)
+    ]
+  }
+}
+
+@Callable(i)
+func setRoyalty(royaltyBp: Int) = {
+  if (i.caller != ownerAddress()) then
+    throw("Only owner")
+  else if (royaltyBp < 0 || royaltyBp > MAX_ROYALTY_BP) then
+    throw("Royalty out of range")
+  else
+    [ IntegerEntry(ROYALTY_BP_KEY, royaltyBp) ]
+}
+
+# ---------- Governance ----------
+@Callable(i)
+func setFee(feeBp: Int) = {
+  if (i.caller != ownerAddress()) then
+    throw("Only owner")
+  else if (feeBp < 0 || feeBp > MAX_FEE_BP) then
+    throw("Fee out of range")
+  else
+    [ IntegerEntry(FEE_BP_KEY, feeBp) ]
+}
+
+@Callable(i)
+func setFeeWallet(feeWalletStr: String) = {
+  if (i.caller != ownerAddress()) then
+    throw("Only owner")
+  else
+    [ StringEntry(FEE_WALLET_KEY, feeWalletStr) ]
+}
+
+# ---------- List NFT (escrow) ----------
+# Attach exactly 1 NFT token in the payment to escrow it
+@Callable(i)
+func list(price: Int) = {
+  if (price <= 0) then
+    throw("Price must be positive")
+  else if (size(i.payments) != 1) then
+    throw("Attach exactly one NFT payment")
+  else {
+    let pmt = i.payments[0]
+    let assetId = match pmt.assetId {
+      case a: ByteVector => a.toBase58String()
+      case _ => throw("Cannot list KSS, attach an NFT")
+    }
+    if (pmt.amount != 1) then
+      throw("Must attach exactly 1 NFT unit")
+    else if (isListed(assetId)) then
+      throw("Already listed")
+    else
+      writeListing(assetId, price, i.caller.toString(), "")
+  }
+}
+
+# ---------- List NFT with category (alias used by marketplace-listings.ts) ----------
+# Same escrow semantics as `list`, but also persists a category label so the
+# read/index layer can group listings. Attach exactly 1 NFT unit as payment.
+@Callable(i)
+func listNFT(price: Int, category: String) = {
+  if (price <= 0) then
+    throw("Price must be positive")
+  else if (size(i.payments) != 1) then
+    throw("Attach exactly one NFT payment")
+  else {
+    let pmt = i.payments[0]
+    let assetId = match pmt.assetId {
+      case a: ByteVector => a.toBase58String()
+      case _ => throw("Cannot list KSS, attach an NFT")
+    }
+    if (pmt.amount != 1) then
+      throw("Must attach exactly 1 NFT unit")
+    else if (isListed(assetId)) then
+      throw("Already listed")
+    else
+      writeListing(assetId, price, i.caller.toString(), category)
+  }
+}
+
+# ---------- Update listing price (seller-only, in-place; NFT stays escrowed) ----------
+# Avoids the costly cancel + re-list round trip. Only the original seller may
+# update. `updateListing` also rewrites the category; `updatePrice` keeps it.
+@Callable(i)
+func updateListing(assetId: String, newPrice: Int, newCategory: String) = {
+  let priceOpt = getInteger(this, listingPriceKey(assetId))
+  let sellerOpt = getString(this, listingSellerKey(assetId))
+  match (priceOpt, sellerOpt) {
+    case (_: Int, s: String) => {
+      if (i.caller.toString() != s) then
+        throw("Only seller can update")
+      else if (newPrice <= 0) then
+        throw("Price must be positive")
+      else
+        [
+          IntegerEntry(listingPriceKey(assetId), newPrice),
+          StringEntry(listingCategoryKey(assetId), newCategory)
+        ]
+    }
+    case _ => throw("Listing not found")
+  }
+}
+
+@Callable(i)
+func updatePrice(assetId: String, newPrice: Int) = {
+  let priceOpt = getInteger(this, listingPriceKey(assetId))
+  let sellerOpt = getString(this, listingSellerKey(assetId))
+  match (priceOpt, sellerOpt) {
+    case (_: Int, s: String) => {
+      if (i.caller.toString() != s) then
+        throw("Only seller can update")
+      else if (newPrice <= 0) then
+        throw("Price must be positive")
+      else
+        [ IntegerEntry(listingPriceKey(assetId), newPrice) ]
+    }
+    case _ => throw("Listing not found")
+  }
+}
+
+# ---------- Delist (return NFT to seller) ----------
+@Callable(i)
+func delist(assetId: String) = {
+  let priceOpt = getInteger(this, listingPriceKey(assetId))
+  let sellerOpt = getString(this, listingSellerKey(assetId))
+  match (priceOpt, sellerOpt) {
+    case (p: Int, s: String) => {
+      if (i.caller.toString() != s && i.caller != ownerAddress()) then
+        throw("Only seller or owner can delist")
+      else
+        ScriptTransfer(addressFromStringValue(s), 1, fromBase58String(assetId))
+          :: clearListing(assetId)
+    }
+    case _ => throw("Listing not found")
+  }
+}
+
+# ---------- Cancel listing (alias used by marketplace-listings.ts) ----------
+@Callable(i)
+func cancelListing(assetId: String) = {
+  let priceOpt = getInteger(this, listingPriceKey(assetId))
+  let sellerOpt = getString(this, listingSellerKey(assetId))
+  match (priceOpt, sellerOpt) {
+    case (_: Int, s: String) => {
+      if (i.caller.toString() != s && i.caller != ownerAddress()) then
+        throw("Only seller or owner can cancel")
+      else
+        ScriptTransfer(addressFromStringValue(s), 1, fromBase58String(assetId))
+          :: clearListing(assetId)
+    }
+    case _ => throw("Listing not found")
+  }
+}
+
+# ---------- Buy NFT (atomic settlement) ----------
+# Attach exact price in KSS
+@Callable(i)
+func buy(assetId: String) = {
+  let priceOpt = getInteger(this, listingPriceKey(assetId))
+  let sellerOpt = getString(this, listingSellerKey(assetId))
+  match (priceOpt, sellerOpt) {
+    case (price: Int, sellerStr: String) => {
+      if (size(i.payments) != 1) then
+        throw("Attach exactly one KSS payment")
+      else {
+        let pmt = i.payments[0]
+        let isKss = match pmt.assetId {
+          case _: ByteVector => false
+          case _ => true
+        }
+        if (!isKss) then
+          throw("Payment must be in KSS")
+        else if (pmt.amount != price) then
+          throw("Payment must equal listing price: " + price.toString())
+        else {
+          let seller = addressFromStringValue(sellerStr)
+          let fee = fraction(price, feeBasisPoints(), 10000)
+          let royalty = fraction(price, royaltyBasisPoints(), 10000)
+          let creator = creatorAddress(assetId)
+          let sellerProceeds = price - fee - royalty
+          # Royalty goes to the ORIGINAL creator (issuer) on every sale,
+          # forever, because issuer is immutable asset metadata.
+          [
+            ScriptTransfer(i.caller, 1, fromBase58String(assetId)),
+            ScriptTransfer(seller, sellerProceeds, unit),
+            ScriptTransfer(feeWallet(), fee, unit),
+            ScriptTransfer(creator, royalty, unit)
+          ] ++ clearListing(assetId)
+        }
+      }
+    }
+    case _ => throw("Listing not found")
+  }
+}
+
+# ---------- Buy NFT (alias used by marketplace-sale.ts: buyNFT) ----------
+# Identical atomic settlement to `buy`; provided so the sale endpoint unit can
+# invoke its documented entrypoint name without re-implementing logic.
+@Callable(i)
+func buyNFT(assetId: String) = {
+  let priceOpt = getInteger(this, listingPriceKey(assetId))
+  let sellerOpt = getString(this, listingSellerKey(assetId))
+  match (priceOpt, sellerOpt) {
+    case (price: Int, sellerStr: String) => {
+      if (size(i.payments) != 1) then
+        throw("Attach exactly one KSS payment")
+      else {
+        let pmt = i.payments[0]
+        let isKss = match pmt.assetId {
+          case _: ByteVector => false
+          case _ => true
+        }
+        if (!isKss) then
+          throw("Payment must be in KSS")
+        else if (pmt.amount != price) then
+          throw("Payment must equal listing price: " + price.toString())
+        else {
+          let seller = addressFromStringValue(sellerStr)
+          let fee = fraction(price, feeBasisPoints(), 10000)
+          let royalty = fraction(price, royaltyBasisPoints(), 10000)
+          let creator = creatorAddress(assetId)
+          let sellerProceeds = price - fee - royalty
+          [
+            ScriptTransfer(i.caller, 1, fromBase58String(assetId)),
+            ScriptTransfer(seller, sellerProceeds, unit),
+            ScriptTransfer(feeWallet(), fee, unit),
+            ScriptTransfer(creator, royalty, unit)
+          ] ++ clearListing(assetId)
+        }
+      }
+    }
+    case _ => throw("Listing not found")
+  }
+}
+
+@Verifier(tx)
+func verify() = sigVerify(tx.bodyBytes, tx.proofs[0], tx.senderPublicKey)

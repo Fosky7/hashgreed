@@ -1,0 +1,10 @@
+{
+  "name": "kross-mainnet",
+  "chainId": "kross-mainnet",
+  "chainType": "kross",
+  "language": "ride",
+  "securityScore": 0,
+  "version": "1.0.0",
+  "createdAt": "2026-06-19T07:00:47.925Z",
+  "updatedAt": "2026-06-19T07:00:47.925Z"
+}
