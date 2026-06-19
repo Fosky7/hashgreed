@@ -1,0 +1,164 @@
+{-# STDLIB_VERSION 6 #-}
+{-# CONTENT_TYPE DAPP #-}
+{-# SCRIPT_TYPE ACCOUNT #-}
+
+# Constants for state keys and configuration
+# Zero-argument functions returning a single expression must be wrapped in a block.
+func OWNER_KEY()      = { "owner" }
+func FEE_BP_KEY()     = { "feeBasisPoints" }   # e.g. 250 = 2.5%
+func FEE_WALLET_KEY() = { "feeWallet" }
+func ROYALTY_BP_KEY() = { "royaltyBasisPoints" } # 250 = 2.5% creator royalty
+func MAX_FEE_BP()     = { 1000 }               # cap fee at 10% (1000 / 10000)
+func MAX_ROYALTY_BP() = { 1000 }               # cap royalty at 10% (1000 / 10000)
+
+# Helper functions
+# Configurable role addresses are stored in state as base58 strings.
+func roleAddress(key: String) = {
+  let s = match getString(this, key) {
+    case v: String => v
+    case _ => throw(key + " not set")
+  }
+  Address(fromBase58String(s))
+}
+
+func requireOwner(i: Invocation) = {
+  if (i.caller != roleAddress(OWNER_KEY())) then throw("Not authorized: Only owner") else true
+}
+
+# Functions with arguments and single-expression bodies do not require a block.
+func priceKey(assetId: String)    = "listing_" + assetId + "_price"
+func sellerKey(assetId: String)   = "listing_" + assetId + "_seller"
+func categoryKey(assetId: String) = "listing_" + assetId + "_category"
+
+# Resolve the original creator (issuer) of an NFT.
+func creatorAddress(assetIdStr: String) = {
+  match assetInfo(fromBase58String(assetIdStr)) {
+    case a: Asset => a.issuer
+    case _ => throw("Unknown asset")
+  }
+}
+
+# Callable Functions
+
+# One-time init: set owner, fee wallet, and initial fee/royalty basis points.
+# Callable only until owner exists.
+@Callable(i)
+func init(owner: String, feeWallet: String, feeBasisPoints: Int, royaltyBasisPoints: Int) = {
+  if (getString(this, OWNER_KEY()).isDefined()) then throw("Already initialized")
+  else if (feeBasisPoints < 0 || feeBasisPoints > MAX_FEE_BP()) then throw("Invalid feeBasisPoints")
+  else if (royaltyBasisPoints < 0 || royaltyBasisPoints > MAX_ROYALTY_BP()) then throw("Invalid royaltyBasisPoints")
+  else [
+    StringEntry(OWNER_KEY(), owner),
+    StringEntry(FEE_WALLET_KEY(), feeWallet),
+    IntegerEntry(FEE_BP_KEY(), feeBasisPoints),
+    IntegerEntry(ROYALTY_BP_KEY(), royaltyBasisPoints)
+  ]
+}
+
+# Owner can rotate the fee wallet.
+@Callable(i)
+func setFeeWallet(newFeeWallet: String) = {
+  if (requireOwner(i)) then [ StringEntry(FEE_WALLET_KEY(), newFeeWallet) ] else []
+}
+
+# Owner can update the marketplace fee basis points.
+@Callable(i)
+func setFeeBasisPoints(newFeeBasisPoints: Int) = {
+  if (requireOwner(i)) then
+    if (newFeeBasisPoints < 0 || newFeeBasisPoints > MAX_FEE_BP()) then throw("Invalid feeBasisPoints")
+    else [ IntegerEntry(FEE_BP_KEY(), newFeeBasisPoints) ]
+  else []
+}
+
+# Owner can update the creator royalty basis points.
+@Callable(i)
+func setRoyaltyBasisPoints(newRoyaltyBasisPoints: Int) = {
+  if (requireOwner(i)) then
+    if (newRoyaltyBasisPoints < 0 || newRoyaltyBasisPoints > MAX_ROYALTY_BP()) then throw("Invalid royaltyBasisPoints")
+    else [ IntegerEntry(ROYALTY_BP_KEY(), newRoyaltyBasisPoints) ]
+  else []
+}
+
+@Callable(i)
+func listNFT(assetId: String, price: Int, category: String) = {
+  let caller = i.caller.bytes.toBase58String()
+  if (price <= 0) then throw("Price must be positive")
+  else [
+    IntegerEntry(priceKey(assetId), price),
+    StringEntry(sellerKey(assetId), caller),
+    StringEntry(categoryKey(assetId), category)
+  ]
+}
+
+@Callable(i)
+func updateCategory(assetId: String, newCategory: String) = {
+  let seller = match getString(this, sellerKey(assetId)) {
+    case s: String => s
+    case _ => throw("Listing not found")
+  }
+  if (i.caller.bytes.toBase58String() != seller) then throw("Only seller can update")
+  else [ StringEntry(categoryKey(assetId), newCategory) ]
+}
+
+@Callable(i)
+func buyNFT(assetId: String) = {
+  let price = match getInteger(this, priceKey(assetId)) {
+    case p: Int => p
+    case _ => throw("Listing not found")
+  }
+  let sellerStr = match getString(this, sellerKey(assetId)) {
+    case s: String => s
+    case _ => throw("Listing not found")
+  }
+  let payment = if (i.payments.size() == 0) then throw("Payment required") else i.payments[0]
+  if (payment.assetId != unit) then throw("Payment must be native coin")
+  else if (payment.amount != price) then throw("Incorrect payment amount")
+  else {
+    let seller = Address(fromBase58String(sellerStr))
+    let feeWallet = roleAddress(FEE_WALLET_KEY())
+    let feeBasisPoints = match getInteger(this, FEE_BP_KEY()) {
+      case bp: Int => bp
+      case _ => throw(FEE_BP_KEY() + " not set")
+    }
+    let royaltyBasisPoints = match getInteger(this, ROYALTY_BP_KEY()) {
+      case bp: Int => bp
+      case _ => throw(ROYALTY_BP_KEY() + " not set")
+    }
+
+    # Fee and creator royalty computed with fraction, then guarded.
+    let fee = fraction(price, feeBasisPoints, 10000)
+    let royalty = fraction(price, royaltyBasisPoints, 10000)
+    let proceeds = price - fee - royalty
+    if (proceeds < 0) then throw("Splits exceed price")
+    else {
+      let creator = creatorAddress(assetId)
+      [
+        ScriptTransfer(seller, proceeds, unit),
+        ScriptTransfer(feeWallet, fee, unit),
+        ScriptTransfer(creator, royalty, unit),
+        ScriptTransfer(i.caller, 1, fromBase58String(assetId)), # Transfer NFT to buyer
+        DeleteEntry(priceKey(assetId)),
+        DeleteEntry(sellerKey(assetId)),
+        DeleteEntry(categoryKey(assetId))
+      ]
+    }
+  }
+}
+
+@Callable(i)
+func cancelListing(assetId: String) = {
+  let seller = match getString(this, sellerKey(assetId)) {
+    case s: String => s
+    case _ => throw("Listing not found")
+  }
+  if (i.caller.bytes.toBase58String() != seller) then throw("Only seller can cancel")
+  else [
+    DeleteEntry(priceKey(assetId)),
+    DeleteEntry(sellerKey(assetId)),
+    DeleteEntry(categoryKey(assetId))
+  ]
+}
+
+# Verifier Function
+@Verifier(tx)
+func verify() = sigVerify(tx.bodyBytes, tx.proofs[0], tx.senderPublicKey)
