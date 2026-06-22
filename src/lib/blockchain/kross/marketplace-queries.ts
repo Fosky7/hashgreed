@@ -1,96 +1,119 @@
 // src/lib/blockchain/kross/marketplace-queries.ts
-import { KROSS_CONFIG, fromWavelets } from './config';
-import { MARKETPLACE_CONFIG } from './deployed.config';
+//
+// Read-only marketplace queries against the LIVE Kross mainnet node. These read
+// the dApp data keys directly (no signing required).
+
+import { KROSS_CONFIG, fromBaseUnits } from './config';
 
 export interface Listing {
   assetId: string;
-  name: string;
-  imageUrl: string;
-  description: string;
-  category: string;
-  priceKSS: number;
+  /** Price in whole KSS. */
+  price: number;
+  /** Seller / lister address. */
   seller: string;
+  /** Category label. */
+  category: string;
+  /** Whether the listing is currently active. */
+  active: boolean;
+}
+
+/** Build a data-key fetch URL for the dApp address. */
+function dataKeyUrl(dApp: string, key: string): string {
+  return `${KROSS_CONFIG.nodeUrl}/addresses/data/${dApp}/${encodeURIComponent(key)}`;
+}
+
+async function readKey<T = unknown>(
+  dApp: string,
+  key: string
+): Promise<T | null> {
+  try {
+    const res = await fetch(dataKeyUrl(dApp, key));
+    if (!res.ok) return null;
+    const body = (await res.json()) as { value: T };
+    return body.value;
+  } catch {
+    return null;
+  }
 }
 
 /**
- * Read all active listings from the marketplace dApp data storage.
- * Convention: each listing is stored as keys:
- *   listing_<assetId>_price, _seller, _category
- * and asset metadata is fetched from the asset details endpoint.
+ * Fetch a single listing by assetId so the UI can pre-fill the current price
+ * and verify the connected wallet is the lister before allowing an update.
+ * Returns null when no (active) listing exists.
  */
-export async function getListings(): Promise<Listing[]> {
-  if (!MARKETPLACE_CONFIG.dAppAddress) return [];
+export async function getListing(assetId: string): Promise<Listing | null> {
+  const dApp = KROSS_CONFIG.marketplaceDApp;
+  if (!dApp || !assetId) return null;
 
-  const res = await fetch(
-    `${KROSS_CONFIG.nodeUrl}/addresses/data/${MARKETPLACE_CONFIG.dAppAddress}`
-  );
-  if (!res.ok) throw new Error('Failed to fetch listings');
-  const entries: Array<{ key: string; value: any }> = await res.json();
+  const base = `listing_${assetId}`;
+  const [active, priceRaw, seller, category] = await Promise.all([
+    readKey<boolean>(dApp, `${base}_active`),
+    readKey<number>(dApp, `${base}_price`),
+    readKey<string>(dApp, `${base}_seller`),
+    readKey<string>(dApp, `${base}_category`),
+  ]);
 
-  // Group entries by assetId.
-  const map = new Map<string, Partial<Listing>>();
-  for (const e of entries) {
-    const m = e.key.match(/^listing_(.+?)_(price|seller|category)$/);
-    if (!m) continue;
-    const [, assetId, field] = m;
-    const cur = map.get(assetId) ?? { assetId };
-    if (field === 'price') cur.priceKSS = fromWavelets(Number(e.value));
-    if (field === 'seller') cur.seller = String(e.value);
-    if (field === 'category') cur.category = String(e.value);
-    map.set(assetId, cur);
-  }
+  // No listing data at all -> not found.
+  if (priceRaw == null && seller == null) return null;
 
-  // Enrich with asset metadata (name + image/description from issue tx).
-  const listings = await Promise.all(
-    [...map.values()].map(async (l) => {
-      const meta = await getAssetMetadata(l.assetId!);
-      return {
-        assetId: l.assetId!,
-        name: meta.name,
-        imageUrl: meta.image,
-        description: meta.description,
-        category: l.category ?? 'Uncategorized',
-        priceKSS: l.priceKSS ?? 0,
-        seller: l.seller ?? '',
-      } as Listing;
-    })
-  );
-
-  return listings.filter((l) => l.priceKSS > 0);
+  return {
+    assetId,
+    price: priceRaw != null ? fromBaseUnits(priceRaw) : 0,
+    seller: seller ?? '',
+    category: category ?? '',
+    active: active === true,
+  };
 }
 
-async function getAssetMetadata(
-  assetId: string
-): Promise<{ name: string; image: string; description: string }> {
-  try {
-    const res = await fetch(`${KROSS_CONFIG.nodeUrl}/assets/details/${assetId}`);
-    const data = await res.json();
-    let image = '';
-    let description = data.description ?? '';
-    // NFT metadata stored as JSON in the description field.
-    try {
-      const parsed = JSON.parse(data.description);
-      image = parsed.image ?? '';
-      description = parsed.description ?? '';
-    } catch {
-      /* plain description */
-    }
-    return { name: data.name ?? 'Unknown', image, description };
-  } catch {
-    return { name: 'Unknown', image: '', description: '' };
-  }
-}
-
+/**
+ * List all categories known to the marketplace dApp. Reads the `categories`
+ * index key if present; returns an empty array when unconfigured.
+ */
 export async function getCategories(): Promise<string[]> {
-  const listings = await getListings();
-  return [...new Set(listings.map((l) => l.category))].sort();
+  const dApp = KROSS_CONFIG.marketplaceDApp;
+  if (!dApp) return [];
+  const raw = await readKey<string>(dApp, 'categories');
+  if (!raw) return [];
+  return raw
+    .split(',')
+    .map((c) => c.trim())
+    .filter(Boolean);
 }
 
+/**
+ * Fetch all listings for a given category. Uses the node's data regex search to
+ * collect matching keys, then assembles Listing objects.
+ */
 export async function getListingsByCategory(
   category: string
 ): Promise<Listing[]> {
-  const listings = await getListings();
-  return listings.filter(
-    (l) => l.category.toLowerCase() === category.toLowerCase()
-  );
+  const dApp = KROSS_CONFIG.marketplaceDApp;
+  if (!dApp || !category) return [];
+
+  try {
+    // Pull all `listing_*_category` entries and match the requested category.
+    const res = await fetch(
+      `${KROSS_CONFIG.nodeUrl}/addresses/data/${dApp}?matches=${encodeURIComponent(
+        'listing_.*_category'
+      )}`
+    );
+    if (!res.ok) return [];
+    const entries = (await res.json()) as Array<{ key: string; value: string }>;
+
+    const wanted = category.toLowerCase();
+    const assetIds = entries
+      .filter((e) => (e.value ?? '').toLowerCase() === wanted)
+      .map((e) => {
+        const m = e.key.match(/^listing_(.+)_category$/);
+        return m ? m[1] : null;
+      })
+      .filter((x): x is string => !!x);
+
+    const listings = await Promise.all(assetIds.map((id) => getListing(id)));
+    return listings.filter(
+      (l): l is Listing => !!l && l.active
+    );
+  } catch {
+    return [];
+  }
 }

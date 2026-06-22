@@ -1,98 +1,58 @@
 // src/App.tsx
-// Install Node-global polyfills BEFORE any blockchain SDK module evaluates.
-import '@/lib/blockchain/kross/polyfills';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { lazy, Suspense } from 'react';
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { KrossWalletProvider } from '@/lib/blockchain/kross/WalletProvider';
-import { RequireWallet } from '@/components/wallet/RequireWallet';
 
-import WalletOnboarding from '@/pages/WalletOnboarding';
-import WalletDashboard from '@/pages/WalletDashboard';
-import SendKss from '@/pages/SendKss';
-import ReceiveKss from '@/pages/ReceiveKss';
-import MintNFT from '@/pages/MintNFT';
-import IssueToken from '@/pages/IssueToken';
-import Marketplace from '@/pages/Marketplace';
-import ExploreHome from '@/pages/ExploreHome';
-import CategoryExplore from '@/pages/CategoryExplore';
-import HomePage from '@/pages/index';
-import { UnlockGate } from '@/components/wallet/UnlockGate';
+// Pages (lazy-loaded to keep the initial bundle lean).
+const HomePage = lazy(() => import('./pages/Home'));
+const ExploreHome = lazy(() => import('./pages/ExploreHome'));
+const ExploreCategories = lazy(() => import('./pages/ExploreCategories'));
+const ExploreByCategory = lazy(() => import('./pages/ExploreByCategory'));
+const CategoryExplore = lazy(() => import('./pages/CategoryExplore'));
+const MoviesHome = lazy(() => import('./pages/MoviesHome'));
+const MintNFT = lazy(() => import('./pages/MintNFT'));
+const UpdateNFTPrice = lazy(() => import('./pages/UpdateNFTPrice'));
+const WalletOnboarding = lazy(() => import('./pages/WalletOnboarding'));
+const WalletDashboard = lazy(() => import('./pages/WalletDashboard'));
+const SendKss = lazy(() => import('./pages/SendKss'));
+const ReceiveKss = lazy(() => import('./pages/ReceiveKss'));
 
 export default function App() {
   return (
     <KrossWalletProvider>
       <BrowserRouter>
-        <Routes>
-          {/* Default landing — redirect root to the public explore page so #root always renders */}
-          <Route path="/" element={<HomePage />} />
+        <Suspense
+          fallback={
+            <div className="min-h-screen flex items-center justify-center text-gray-500">
+              Loading…
+            </div>
+          }
+        >
+          <Routes>
+            <Route path="/" element={<HomePage />} />
+            <Route path="/explore" element={<ExploreHome />} />
+            <Route path="/categories" element={<ExploreCategories />} />
+            <Route path="/explore/by-category" element={<ExploreByCategory />} />
+            <Route
+              path="/marketplace/explore/:category"
+              element={<CategoryExplore />}
+            />
+            <Route path="/movies" element={<MoviesHome />} />
+            <Route path="/create" element={<MintNFT />} />
 
-          {/* Public onboarding */}
-          <Route path="/wallet/onboarding" element={<WalletOnboarding />} />
+            {/* Update an existing listing's price (owner-only flow). */}
+            <Route
+              path="/marketplace/update-price/:assetId"
+              element={<UpdateNFTPrice />}
+            />
 
-          {/* Public NFT category explore (browse without unlocking) */}
-          <Route path="/explore" element={<ExploreHome />} />
-          <Route path="/explore/:category" element={<CategoryExplore />} />
-
-          {/* Wallet-guarded routes */}
-          <Route
-            path="/wallet"
-            element={
-              <RequireWallet>
-                <WalletDashboard />
-              </RequireWallet>
-            }
-          />
-          <Route
-            path="/wallet/send"
-            element={
-              <RequireWallet>
-                <UnlockGate>
-                  <SendKss />
-                </UnlockGate>
-              </RequireWallet>
-            }
-          />
-          <Route
-            path="/wallet/receive"
-            element={
-              <RequireWallet>
-                <ReceiveKss />
-              </RequireWallet>
-            }
-          />
-          <Route
-            path="/mint"
-            element={
-              <RequireWallet>
-                <UnlockGate>
-                  <MintNFT />
-                </UnlockGate>
-              </RequireWallet>
-            }
-          />
-          <Route
-            path="/issue-token"
-            element={
-              <RequireWallet>
-                <UnlockGate>
-                  <IssueToken />
-                </UnlockGate>
-              </RequireWallet>
-            }
-          />
-          <Route
-            path="/marketplace"
-            element={
-              <RequireWallet>
-                <UnlockGate>
-                  <Marketplace />
-                </UnlockGate>
-              </RequireWallet>
-            }
-          />
-
-          {/* Fallback: any unmatched path renders the explore landing instead of an empty page */}
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+            {/* Wallet */}
+            <Route path="/wallet/onboarding" element={<WalletOnboarding />} />
+            <Route path="/wallet" element={<WalletDashboard />} />
+            <Route path="/wallet/send" element={<SendKss />} />
+            <Route path="/wallet/receive" element={<ReceiveKss />} />
+          </Routes>
+        </Suspense>
       </BrowserRouter>
     </KrossWalletProvider>
   );

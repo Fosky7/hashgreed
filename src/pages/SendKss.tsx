@@ -104,7 +104,8 @@ export default function SendKss() {
         />
         {!validAddr && (
           <p className="text-xs text-red-600 mt-1">
-            Address must start with 3K and be 35 characters.
+            Invalid Kross address. Must match 3K followed by 33 alphanumeric
+            characters.
           </p>
         )}
       </div>
