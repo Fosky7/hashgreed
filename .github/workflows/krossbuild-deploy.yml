@@ -81,6 +81,47 @@ jobs:
           restore-keys: |
             bun-${{ runner.os }}-
 
+      # Some user package.json files contain JS-style comments or trailing
+      # commas (invalid JSON). esbuild reads package.json when loading
+      # vite.config.ts and hard-fails with "JSON does not support comments",
+      # killing the build before bundling. Normalize it here (string-aware,
+      # only rewrites when the file is actually invalid) so no malformed
+      # package.json can break a user's build.
+      - name: 🧹 Normalize package.json
+        run: |
+          set -eo pipefail
+          cat > /tmp/normalize-pkg.cjs <<'NORMEOF'
+          const fs = require('fs');
+          const p = 'package.json';
+          let s;
+          try { s = fs.readFileSync(p, 'utf8'); } catch (e) { process.exit(0); }
+          try { JSON.parse(s); process.exit(0); } catch (e) {}
+          let out = '', inStr = false, q = '', esc = false;
+          for (let i = 0; i < s.length; i++) {
+            const c = s[i], n = s[i + 1];
+            if (inStr) {
+              out += c;
+              if (esc) esc = false;
+              else if (c === '\\') esc = true;
+              else if (c === q) inStr = false;
+              continue;
+            }
+            if (c === '"' || c === "'") { inStr = true; q = c; out += c; continue; }
+            if (c === '/' && n === '/') { while (i < s.length && s[i] !== '\n') i++; out += '\n'; continue; }
+            if (c === '/' && n === '*') { i += 2; while (i < s.length && !(s[i] === '*' && s[i + 1] === '/')) i++; i++; continue; }
+            out += c;
+          }
+          out = out.replace(/,(\s*[}\]])/g, '$1');
+          try {
+            const o = JSON.parse(out);
+            fs.writeFileSync(p, JSON.stringify(o, null, 2) + '\n');
+            console.log('Normalized package.json (stripped comments/trailing commas).');
+          } catch (e) {
+            console.error('::warning::Could not auto-normalize package.json: ' + e.message);
+          }
+          NORMEOF
+          node /tmp/normalize-pkg.cjs 2>&1 | tee -a build.log
+
       # Every build step tees its output into build.log so the failure
       # reporter below can ship the real error text to KrossBuild for
       # deterministic signature classification + auto-fix. GitHub's default
