@@ -10,7 +10,6 @@ const CDN_EXTERNALS = [
   "@waves/ts-lib-crypto",
 ];
 
-// https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
   resolve: {
@@ -19,12 +18,10 @@ export default defineConfig({
     },
   },
   optimizeDeps: {
-    // Don't pre-bundle these in dev — they're CDN-loaded at runtime.
     exclude: CDN_EXTERNALS,
   },
   build: {
     rollupOptions: {
-      // Mark as external so Rollup never tries to resolve them from node_modules.
       external: CDN_EXTERNALS,
     },
   },

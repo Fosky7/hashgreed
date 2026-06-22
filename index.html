@@ -1,10 +1,25 @@
-<!DOCTYPE html>
+<!-- index.html -->
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.ico" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Hashgreed</title>
+
+    <!--
+      Import map: resolves the Waves SDK bare specifiers to esm.sh at runtime.
+      These packages are intentionally NOT in node_modules; they load from the
+      CDN via loadChainSdk() after Node globals (Buffer/process) are installed.
+    -->
+    <script type="importmap">
+      {
+        "imports": {
+          "@waves/waves-transactions": "https://esm.sh/@waves/waves-transactions@4.3.4?target=es2020&bundle",
+          "@waves/ts-lib-crypto": "https://esm.sh/@waves/ts-lib-crypto@1.4.4-beta.1?target=es2020&bundle"
+        }
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

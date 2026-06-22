@@ -2,7 +2,6 @@
 // Deletes a category mapping. Allowed if caller is the seller, OR if the
 // listing no longer exists in state (sold/cancelled — anyone can clean it up).
 import { createClient } from "jsr:@supabase/supabase-js@2";
-import { verifyAuthData } from "https://esm.sh/@waves/waves-transactions@4";
 
 const NODE = "https://nodes.krossexplorer.com";
 const DAPP = "3KTJhKQUqzSMtjbteCAX79oT8PKw5pLKHko";
@@ -23,6 +22,28 @@ async function fetchSeller(assetId: string): Promise<string | null> {
   return typeof data?.value === "string" ? data.value : null;
 }
 
+/**
+ * Verify a Kross auth signature. The SDK is imported DYNAMICALLY (not at
+ * module top-level) so the Node-global init code only runs when actually
+ * needed — mirroring the front-end loadChainSdk pattern.
+ */
+async function verifyKrossSignature(params: {
+  publicKey: string;
+  signature: string;
+  address: string;
+  data: string;
+}): Promise<boolean> {
+  const { verifyAuthData } = await import("npm:@waves/waves-transactions@4.3.4");
+  try {
+    return verifyAuthData(
+      { publicKey: params.publicKey, signature: params.signature, address: params.address },
+      { data: params.data, host: "kross-marketplace" },
+    );
+  } catch {
+    return false;
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   if (req.method !== "POST") return json({ error: "method not allowed" }, 405);
@@ -40,10 +61,7 @@ Deno.serve(async (req) => {
     // Listing still active → require seller signature to remove.
     if (!publicKey || !signature || !address) return json({ error: "auth required" }, 401);
     const expected = `kross-category-clear:${assetId}`;
-    let ok = false;
-    try {
-      ok = verifyAuthData({ publicKey, signature, address }, { data: expected, host: "kross-marketplace" });
-    } catch { ok = false; }
+    const ok = await verifyKrossSignature({ publicKey, signature, address, data: expected });
     if (!ok) return json({ error: "bad signature" }, 401);
     if (seller !== address) return json({ error: "not listing owner" }, 403);
   }

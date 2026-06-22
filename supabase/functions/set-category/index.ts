@@ -1,44 +1,75 @@
 // supabase/functions/set-category/index.ts
-// Verifies the caller owns the listing (seller in contract state) before
-// writing the off-chain category. Uses the service role to bypass RLS.
+// Sets/updates the off-chain category for a listed NFT.
+// Only the current seller (verified via Kross signature) may set a category
+// while the listing is active on-chain.
 import { createClient } from "jsr:@supabase/supabase-js@2";
-import { verifyAuthData } from "https://esm.sh/@waves/waves-transactions@4";
 
 const NODE = "https://nodes.krossexplorer.com";
 const DAPP = "3KTJhKQUqzSMtjbteCAX79oT8PKw5pLKHko";
 
-const VALID = new Set(["art", "photography", "music", "movies", "gaming", "digital-ip"]);
+// Keep in sync with the front-end category whitelist.
+const VALID_CATEGORIES = new Set([
+  "art",
+  "photography",
+  "music",
+  "movies",
+  "gaming",
+  "digital-ip",
+]);
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
-
-function json(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), {
-    status,
+const json = (b: unknown, s = 200) =>
+  new Response(JSON.stringify(b), {
+    status: s,
     headers: { ...cors, "content-type": "application/json" },
   });
-}
 
-/** Read the listing's seller from dApp state: key `seller_<assetId>`. */
+/** Read the on-chain seller for an asset, or null if no active listing. */
 async function fetchSeller(assetId: string): Promise<string | null> {
-  const key = `seller_${assetId}`;
-  const res = await fetch(
-    `${NODE}/addresses/data/${DAPP}/${encodeURIComponent(key)}`
-  );
+  const key = encodeURIComponent(`seller_${assetId}`);
+  const res = await fetch(`${NODE}/addresses/data/${DAPP}/${key}`);
   if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`state lookup failed: ${res.status}`);
+  if (!res.ok) throw new Error(`state ${res.status}`);
   const data = await res.json();
   return typeof data?.value === "string" ? data.value : null;
+}
+
+/**
+ * Verify a Kross auth signature. The SDK is imported DYNAMICALLY (never at
+ * module top-level) so Node-global init code only runs when needed — mirroring
+ * the front-end loadChainSdk pattern. This keeps the module side-effect-free
+ * at import time and prevents the package from being statically bundled.
+ */
+async function verifyKrossSignature(params: {
+  publicKey: string;
+  signature: string;
+  address: string;
+  data: string;
+}): Promise<boolean> {
+  const { verifyAuthData } = await import("npm:@waves/waves-transactions@4.3.4");
+  try {
+    return verifyAuthData(
+      {
+        publicKey: params.publicKey,
+        signature: params.signature,
+        address: params.address,
+      },
+      { data: params.data, host: "kross-marketplace" },
+    );
+  } catch {
+    return false;
+  }
 }
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   if (req.method !== "POST") return json({ error: "method not allowed" }, 405);
 
-  let payload: {
+  let p: {
     assetId?: string;
     category?: string;
     publicKey?: string;
@@ -46,53 +77,46 @@ Deno.serve(async (req) => {
     address?: string;
   };
   try {
-    payload = await req.json();
+    p = await req.json();
   } catch {
     return json({ error: "invalid json" }, 400);
   }
 
-  const { assetId, category, publicKey, signature, address } = payload;
-  if (!assetId || !category || !publicKey || !signature || !address) {
-    return json({ error: "missing fields" }, 400);
-  }
-  if (!VALID.has(category)) {
+  const { assetId, category, publicKey, signature, address } = p;
+  if (!assetId) return json({ error: "missing assetId" }, 400);
+  if (!category || !VALID_CATEGORIES.has(category)) {
     return json({ error: "invalid category" }, 400);
   }
-
-  // 1. Verify the signature binds the caller to this exact assetId+category.
-  //    The client signs `kross-category:<assetId>:<category>` as authData.
-  const expected = `kross-category:${assetId}:${category}`;
-  let signerOk = false;
-  try {
-    signerOk = verifyAuthData(
-      { publicKey, signature, address },
-      { data: expected, host: "kross-marketplace" }
-    );
-  } catch {
-    signerOk = false;
+  if (!publicKey || !signature || !address) {
+    return json({ error: "auth required" }, 401);
   }
-  if (!signerOk) return json({ error: "bad signature" }, 401);
 
-  // 2. Verify the signer is the listing's seller in contract state.
+  // The listing must still be active on-chain to (re)categorize it.
   let seller: string | null;
   try {
     seller = await fetchSeller(assetId);
   } catch (e) {
-    return json({ error: `state error: ${String(e)}` }, 502);
+    return json({ error: String(e) }, 502);
   }
-  if (!seller) return json({ error: "no active listing for asset" }, 404);
+  if (!seller) return json({ error: "no active listing" }, 404);
+
+  // Signature binds the caller to this exact asset + category intent.
+  const expected = `kross-category-set:${assetId}:${category}`;
+  const ok = await verifyKrossSignature({ publicKey, signature, address, data: expected });
+  if (!ok) return json({ error: "bad signature" }, 401);
   if (seller !== address) return json({ error: "not listing owner" }, 403);
 
-  // 3. Upsert with the service role (RLS bypassed server-side only).
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
+
+  // Upsert so re-categorizing an asset overwrites the prior value.
   const { error } = await supabase
     .from("nft_categories")
     .upsert(
       { asset_id: assetId, category, seller: address, updated_at: new Date().toISOString() },
-      { onConflict: "asset_id" }
+      { onConflict: "asset_id" },
     );
   if (error) return json({ error: error.message }, 500);
 
