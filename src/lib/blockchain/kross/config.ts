@@ -1,62 +1,78 @@
 // src/lib/blockchain/kross/config.ts
-//
-// Source of truth: https://decentralizedafrica.com/sdk (Kross chain).
-// This file is the chain/network configuration service for the app.
-
-/**
- * Resilient node endpoints for WRITE / RPC operations (broadcasting,
- * tx info polling). The primary node is listed first; nodes2/nodes3 are
- * backups used for failover. Indexed READ queries should instead use
- * `apiUrl` (see getApiUrl / part 2 query refactor).
- */
-export const KROSS_NODE_URLS = [
-  'https://nodes.krossexplorer.com',
-  'https://nodes2.krossexplorer.com',
-  'https://nodes3.krossexplorer.com',
-] as const;
+import DEPLOYED_CONFIG from "./deployed.config";
 
 export const KROSS_CONFIG = {
-  // Resilient node list (primary first, then backups) for RPC/broadcast.
-  nodeUrls: KROSS_NODE_URLS,
-  // Backward-compatible single-node accessor (primary). Existing callers in
-  // queries.ts / transfer.ts / assets.ts / marketplace-queries.ts keep working
-  // until they are migrated to nodeUrls/apiUrl in part 2.
-  nodeUrl: KROSS_NODE_URLS[0],
-  // Dedicated indexed API base for READ queries (balances, txs, listings).
-  apiUrl: 'https://krossexplorer.com/api',
-  chainId: 'N',
-  explorerUrl: 'https://krossexplorer.com',
-  nativeCoin: 'KSS',
-  decimals: 8,
-  addressPrefix: '3K',
-  // Strict Kross address format per SDK: '3K' + 33 alphanumeric chars.
-  addressRegex: /^3K[a-zA-Z0-9]{33}$/,
-  // 1 KSS = 100,000,000 wavelets
-  unit: 100_000_000,
-  fees: {
-    transfer: 0.001,
-    massTransfer: 0.007,
-    issueAsset: 1,
-    issueNFT: 0.001,
-    // SDK-specified dApp invocation fee.
-    invoke: 0.0065,
-    setScript: 0.01,
-  },
+  chain: "kross",
+  chainId: "N",
+  nodeUrl: "https://nodes.krossexplorer.com",
+  explorerUrl: "https://krossexplorer.com",
+  addressPrefix: "3K",
+  nativeCoin: { name: "Kross", symbol: "KSS", decimals: 8 },
+  language: "RIDE",
 } as const;
 
-/**
- * Returns the active node URL for WRITE / RPC operations.
- * Acts as the single switch point so failover logic (part 2's resilient
- * broadcast) can iterate KROSS_CONFIG.nodeUrls when a node is unreachable.
- */
-export const getActiveNode = (index = 0): string =>
-  KROSS_CONFIG.nodeUrls[index] ?? KROSS_CONFIG.nodeUrls[0];
+export const NODE_URL = KROSS_CONFIG.nodeUrl;
+export const CHAIN_ID = KROSS_CONFIG.chainId;
+export const EXPLORER_URL = KROSS_CONFIG.explorerUrl;
+export const KSS_DECIMALS = 8;
+export const KSS_FACTOR = 100_000_000; // 10^8 wavelets per KSS
 
-/** Returns the indexed READ API base URL. */
-export const getApiUrl = (): string => KROSS_CONFIG.apiUrl;
+// Marketplace config — derived from the read-only deployed config.
+// Pulls the marketplace dApp address from contracts[] when present.
+export const MARKETPLACE_CONFIG = {
+  ...KROSS_CONFIG,
+  dAppAddress:
+    (DEPLOYED_CONFIG.contracts as ReadonlyArray<{ name?: string; address?: string }>)
+      .find((c) => c?.name?.toLowerCase().includes("marketplace"))?.address ?? "",
+  contracts: DEPLOYED_CONFIG.contracts,
+} as const;
 
-export const toWavelets = (kss: number): number =>
-  Math.round(kss * KROSS_CONFIG.unit);
+export const FEES = {
+  TRANSFER: 100_000,
+  MASS_TRANSFER: 700_000,
+  ISSUE_ASSET: 100_000_000,
+  ISSUE_NFT: 100_000,
+  INVOKE_SCRIPT: 500_000,
+  SET_SCRIPT: 1_000_000,
+} as const;
 
-export const fromWavelets = (wavelets: number): number =>
-  wavelets / KROSS_CONFIG.unit;
+/** Convert KSS (human units) -> wavelets (integer base units). */
+export function toWavelets(amountKSS: number | string): number {
+  const n = typeof amountKSS === "string" ? Number(amountKSS) : amountKSS;
+  if (!Number.isFinite(n)) throw new Error(`Invalid KSS amount: ${amountKSS}`);
+  return Math.round(n * KSS_FACTOR);
+}
+
+/** Convert wavelets (integer base units) -> KSS (human units). */
+export function fromWavelets(wavelets: number | string): number {
+  const n = typeof wavelets === "string" ? Number(wavelets) : wavelets;
+  if (!Number.isFinite(n)) throw new Error(`Invalid wavelets amount: ${wavelets}`);
+  return n / KSS_FACTOR;
+}
+
+// Aliases used across marketplace modules.
+export const toBaseUnits = toWavelets;
+export const fromBaseUnits = fromWavelets;
+
+/** Format wavelets as a display string, e.g. "1.50000000 KSS". */
+export function formatKSS(wavelets: number | string): string {
+  return `${fromWavelets(wavelets).toFixed(KSS_DECIMALS)} KSS`;
+}
+
+/** Build an explorer URL for a transaction id. */
+export function explorerTxUrl(txId: string): string {
+  return `${EXPLORER_URL}/transactions/${txId}`;
+}
+
+/** Build an explorer URL for an address. */
+export function explorerAddressUrl(address: string): string {
+  return `${EXPLORER_URL}/address/${address}`;
+}
+
+/** Build an explorer URL for an asset. */
+export function explorerAssetUrl(assetId: string): string {
+  return `${EXPLORER_URL}/assets/${assetId}`;
+}
+
+export { DEPLOYED_CONFIG };
+export default KROSS_CONFIG;
