@@ -51,7 +51,13 @@ jobs:
               echo "Repository root listing:"; ls -la
               exit 1
             fi
-            if ! node -e "const s=require('./package.json').scripts||{}; process.exit((s.build||s.dev) ? 0 : 1)" 2>/dev/null; then
+            # Tolerant build-script check. package.json may carry a leading
+            # // comment, a BOM, or a trailing comma — all of which strict JSON
+            # parsers (require/JSON.parse) reject, causing a FALSE "no build
+            # script" failure on otherwise-valid projects. Grep for the script
+            # key instead; the real "vite build" step below is the source of
+            # truth for anything subtler.
+            if ! grep -Eq '"(build|dev)"[[:space:]]*:' package.json; then
               echo "::error::package.json has no 'build' (or 'dev') script — this does not look like a full Vite project. The complete project was likely not pushed to GitHub. Reconnect GitHub / re-push code, then retry."
               echo "package.json contents:"; cat package.json
               exit 1
