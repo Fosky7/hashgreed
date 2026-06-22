@@ -1,84 +1,51 @@
 // src/lib/blockchain/loadChainSdk.ts
-//
-// Centralized, BUILD-SAFE + RUNTIME-SAFE loader for blockchain SDKs.
-//
-// Why this file exists
-// --------------------
-// The production bundler (esbuild) statically analyses every `import()` call.
-// When it sees a STRING-LITERAL dynamic import such as
-//     await import('@waves/waves-transactions')
-// it still tries to RESOLVE that specifier at build time so it can code-split
-// it into a chunk. In this environment that package is not resolvable, so the
-// build fails with:
-//     Unresolved import "@waves/waves-transactions" from .../assets.ts
-//
-// The trick: esbuild only special-cases `import("<literal>")`. If the module
-// specifier is computed from a NON-LITERAL expression (a variable / template
-// string), the analyser cannot constant-fold it and therefore leaves it as a
-// genuine runtime import instead of trying to resolve it at build time. We
-// resolve the SDK from the esm.sh CDN at runtime, AFTER the Node-global
-// polyfills (Buffer/process/global) have been installed.
-//
-// All Kross/Waves SDK loading in the app must go through this module.
-/* eslint-disable @typescript-eslint/no-explicit-any */
-
-// Ensure Node globals exist before any SDK module evaluates.
-import './kross/polyfills';
-
-// esm.sh CDN base. `external=react,react-dom` keeps the host app's React copy.
-const CDN_BASE = 'https://esm.sh/';
-
-// Map a short chain-SDK key to its npm package specifier (with CDN query).
-const SDK_SPECIFIERS: Record<string, string> = {
-  'waves-transactions':
-    '@waves/waves-transactions@4.4.0?external=react,react-dom',
-  'ts-lib-crypto': '@waves/ts-lib-crypto@1.4.4?external=react,react-dom',
-};
-
-// Cache resolved modules so repeated calls don't re-download.
-const moduleCache = new Map<string, Promise<any>>();
 
 /**
- * Indirection helper. Because `spec` is a function parameter (NOT a literal at
- * the call site), esbuild will not attempt build-time resolution of it.
+ * Installs Node globals (Buffer/process) required by chain SDKs, THEN
+ * dynamically imports them. Importing these packages statically crashes
+ * the in-browser preview because they reference Buffer/process at
+ * module-eval time. Always await loadChainSdk(...) inside functions.
  */
-function runtimeImport(spec: string): Promise<any> {
-  // The /* @vite-ignore */ comment additionally tells Vite-style analysers to
-  // skip this dynamic import. Harmless under plain esbuild.
-  return import(/* @vite-ignore */ /* webpackIgnore: true */ spec);
+
+let globalsReady: Promise<void> | null = null;
+
+async function ensureGlobals(): Promise<void> {
+  if (globalsReady) return globalsReady;
+  globalsReady = (async () => {
+    const g = globalThis as any;
+    if (typeof g.global === "undefined") g.global = globalThis;
+    if (typeof g.process === "undefined") {
+      g.process = { env: {}, browser: true, version: "", nextTick: (cb: any) => setTimeout(cb, 0) };
+    }
+    if (typeof g.Buffer === "undefined") {
+      const { Buffer } = await import("buffer");
+      g.Buffer = Buffer;
+    }
+  })();
+  return globalsReady;
 }
 
-/**
- * Dynamically load a blockchain SDK at runtime (post-polyfill).
- *
- * @param name short key: 'waves-transactions' | 'ts-lib-crypto'
- * @returns the resolved module (namespace), normalised so callers can read
- *          either named or default exports.
- */
-export async function loadChainSdk(
-  name: keyof typeof SDK_SPECIFIERS | string
-): Promise<any> {
-  const key = String(name);
-  const cached = moduleCache.get(key);
-  if (cached) return cached;
+type KrossSdk = {
+  wavesTx: typeof import("@waves/waves-transactions");
+  crypto: typeof import("@waves/ts-lib-crypto");
+};
 
-  const pkg = SDK_SPECIFIERS[key];
-  if (!pkg) {
-    throw new Error(`Unknown chain SDK requested: "${key}".`);
+const cache: Record<string, any> = {};
+
+export async function loadChainSdk(chain: "kross"): Promise<KrossSdk> {
+  if (cache[chain]) return cache[chain];
+  await ensureGlobals();
+
+  switch (chain) {
+    case "kross": {
+      const [wavesTx, crypto] = await Promise.all([
+        import("@waves/waves-transactions"),
+        import("@waves/ts-lib-crypto"),
+      ]);
+      cache[chain] = { wavesTx, crypto } as KrossSdk;
+      return cache[chain];
+    }
+    default:
+      throw new Error(`Unsupported chain: ${chain}`);
   }
-
-  // Build the specifier from variables so it is never a static literal.
-  const specifier = CDN_BASE + pkg;
-
-  const promise = runtimeImport(specifier)
-    .then((mod: any) => mod?.default && !mod?.transfer && !mod?.address ? { ...mod.default, ...mod } : mod)
-    .catch((err: unknown) => {
-      moduleCache.delete(key);
-      throw err instanceof Error
-        ? err
-        : new Error(`Failed to load chain SDK "${key}".`);
-    });
-
-  moduleCache.set(key, promise);
-  return promise;
 }

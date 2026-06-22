@@ -1,0 +1,106 @@
+{-# STDLIB_VERSION 6 #-}
+{-# CONTENT_TYPE DAPP #-}
+{-# SCRIPT_TYPE ACCOUNT #-}
+
+#
+# Kross Mainnet — NFT Marketplace dApp
+#
+# Storage schema (per listed asset, keyed by assetId string):
+#   listing_<assetId>_active   : Boolean  -> whether the listing is currently active
+#   listing_<assetId>_price    : Int      -> price in KSS base units (10^8 = 1 KSS)
+#   listing_<assetId>_seller   : String   -> seller/owner address (the lister)
+#   listing_<assetId>_category : String   -> marketplace category label
+#   listing_<assetId>_updatedAt: Int      -> block height of last price update
+#
+# The update function below ONLY mutates the price (and the updatedAt marker).
+# It never touches ownership/category keys, preserving the existing schema.
+#
+
+# --- Data key helpers (single source of truth for the schema) ---
+func kActive(assetId: String)   = "listing_" + assetId + "_active"
+func kPrice(assetId: String)    = "listing_" + assetId + "_price"
+func kSeller(assetId: String)   = "listing_" + assetId + "_seller"
+func kCategory(assetId: String) = "listing_" + assetId + "_category"
+func kUpdatedAt(assetId: String)= "listing_" + assetId + "_updatedAt"
+
+# Read helpers
+func isActive(assetId: String) =
+    match getBoolean(this, kActive(assetId)) {
+        case b: Boolean => b
+        case _ => false
+    }
+
+func sellerOf(assetId: String) =
+    match getString(this, kSeller(assetId)) {
+        case s: String => s
+        case _ => ""
+    }
+
+#
+# listNFT — list an NFT for sale (existing behaviour, included for completeness
+# so the schema/keys are explicit and consistent with updateNFTPrice).
+#
+@Callable(i)
+func listNFT(assetId: String, price: Int, category: String) = {
+    let caller = toBase58String(i.caller.bytes)
+    if (price <= 0) then
+        throw("Price must be greater than zero")
+    else if (isActive(assetId)) then
+        throw("Asset is already listed")
+    else
+        [
+            BooleanEntry(kActive(assetId), true),
+            IntegerEntry(kPrice(assetId), price),
+            StringEntry(kSeller(assetId), caller),
+            StringEntry(kCategory(assetId), category),
+            IntegerEntry(kUpdatedAt(assetId), height)
+        ]
+}
+
+#
+# updateNFTPrice — allow the original lister to change the listed price.
+#
+# Validation:
+#   (a) a listing must exist & be active for assetId
+#   (b) the caller must equal the stored seller address
+#   (c) newPrice must be > 0
+#
+# On success only the price (and updatedAt marker) are rewritten — ownership
+# and category keys are intentionally left untouched.
+#
+@Callable(i)
+func updateNFTPrice(assetId: String, newPrice: Int) = {
+    let caller = toBase58String(i.caller.bytes)
+    let seller = sellerOf(assetId)
+    if (!isActive(assetId)) then
+        throw("Listing not found or inactive for asset")
+    else if (seller == "") then
+        throw("Listing not found or inactive for asset")
+    else if (caller != seller) then
+        throw("Only the lister can update the price")
+    else if (newPrice <= 0) then
+        throw("New price must be greater than zero")
+    else
+        [
+            IntegerEntry(kPrice(assetId), newPrice),
+            IntegerEntry(kUpdatedAt(assetId), height)
+        ]
+}
+
+#
+# delistNFT — remove a listing (existing behaviour, schema reference).
+#
+@Callable(i)
+func delistNFT(assetId: String) = {
+    let caller = toBase58String(i.caller.bytes)
+    let seller = sellerOf(assetId)
+    if (!isActive(assetId)) then
+        throw("Listing not found or inactive for asset")
+    else if (caller != seller) then
+        throw("Only the lister can delist")
+    else
+        [
+            BooleanEntry(kActive(assetId), false),
+            IntegerEntry(kUpdatedAt(assetId), height)
+        ]
+}
