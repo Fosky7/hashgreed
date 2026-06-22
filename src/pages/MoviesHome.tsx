@@ -27,7 +27,7 @@ const MoviesHome: React.FC = () => {
             alt="Cinematic collection of movie scenes"
             className="w-full h-64 md:h-80 lg:h-96 object-cover"
           />
-          <div className="absolute inset-0 bg-gradient-to-r from-black/80 via-black/50 to-transparent" aria-hidden="true" />
+          <div className="absolute inset-0 pointer-events-none bg-gradient-to-r from-black/80 via-black/50 to-transparent" aria-hidden="true" />
           <div className="absolute inset-0 flex flex-col justify-center px-6 md:px-12 max-w-2xl">
             <h1 className="text-3xl md:text-5xl font-extrabold text-white drop-shadow-lg mb-3">
               Discover Movies by Category
