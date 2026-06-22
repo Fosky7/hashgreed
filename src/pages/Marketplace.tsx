@@ -13,6 +13,7 @@ export default function Marketplace() {
   const [action, setAction] = useState<Action>('buy');
   const [assetId, setAssetId] = useState('');
   const [priceKSS, setPriceKSS] = useState('');
+  const [category, setCategory] = useState('Uncategorized');
   const [password, setPassword] = useState('');
   const [status, setStatus] = useState<Status>('idle');
   const [error, setError] = useState('');
@@ -38,19 +39,27 @@ export default function Marketplace() {
     try {
       const res =
         action === 'list'
-          ? await invokeMarketplace({
+          ? // listNFT(price, category): the NFT itself is attached as the
+            // invoke payment (assetId = the NFT id, amount = 1). Native KSS is
+            // NEVER attached here — only the NFT being escrowed.
+            await invokeMarketplace({
               dApp: MARKETPLACE_CONFIG.dAppAddress,
               fnName: MARKETPLACE_CONFIG.functions.list,
               args: [
-                { type: 'string', value: assetId },
                 {
                   type: 'integer',
                   value: Math.round(priceNum * KROSS_CONFIG.unit),
                 },
+                { type: 'string', value: category || 'Uncategorized' },
               ],
+              // Attach the NFT (1 unit) as payment so the dApp can escrow it.
+              paymentAmount: 1,
+              paymentAssetId: assetId,
               password,
             })
-          : await invokeMarketplace({
+          : // buyNFT(assetId): exactly one NATIVE KSS payment equal to price.
+            // Native KSS => assetId null (it has no assetId on Kross).
+            await invokeMarketplace({
               dApp: MARKETPLACE_CONFIG.dAppAddress,
               fnName: MARKETPLACE_CONFIG.functions.buy,
               args: [{ type: 'string', value: assetId }],
@@ -135,6 +144,18 @@ export default function Marketplace() {
             value={assetId}
             onChange={(e) => setAssetId(e.target.value)}
             placeholder="Asset ID to buy"
+            className="w-full p-3 rounded-xl border text-sm mt-1"
+          />
+        </div>
+      )}
+
+      {action === 'list' && (
+        <div>
+          <label className="text-sm font-medium">Category</label>
+          <input
+            value={category}
+            onChange={(e) => setCategory(e.target.value)}
+            placeholder="e.g. Art, Music, Gaming"
             className="w-full p-3 rounded-xl border text-sm mt-1"
           />
         </div>
