@@ -131,6 +131,69 @@ jobs:
           set -eo pipefail
           bun install 2>&1 | tee -a build.log
 
+      # User code frequently imports packages that were never added to
+      # package.json (e.g. "lucide-react"), so Rollup fails to resolve the
+      # import and the build dies. Scan the source for bare imports that are
+      # not installed and `bun add` them before building. Best-effort: never
+      # fails the build, just heals what it can.
+      - name: 🔗 Resolve missing imports
+        run: |
+          set -eo pipefail
+          cat > /tmp/resolve-imports.cjs <<'RESEOF'
+          const fs = require('fs');
+          const path = require('path');
+          const cp = require('child_process');
+          let pkg = {};
+          try { pkg = JSON.parse(fs.readFileSync('package.json', 'utf8')); } catch (e) { process.exit(0); }
+          const known = new Set([
+            ...Object.keys(pkg.dependencies || {}),
+            ...Object.keys(pkg.devDependencies || {}),
+            ...Object.keys(pkg.peerDependencies || {}),
+            ...Object.keys(pkg.optionalDependencies || {}),
+          ]);
+          const builtins = new Set(require('module').builtinModules);
+          const exts = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']);
+          const files = [];
+          const walk = (d) => {
+            let ents = [];
+            try { ents = fs.readdirSync(d, { withFileTypes: true }); } catch (e) { return; }
+            for (const e of ents) {
+              if (e.name === 'node_modules' || e.name === '.git' || e.name === 'dist') continue;
+              const fp = path.join(d, e.name);
+              if (e.isDirectory()) walk(fp);
+              else if (exts.has(path.extname(e.name))) files.push(fp);
+            }
+          };
+          if (fs.existsSync('src')) walk('src'); else walk('.');
+          const re = /(?:import|export)[^;]*?from\s*['"]([^'"]+)['"]|import\s*\(\s*['"]([^'"]+)['"]\s*\)|require\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
+          const missing = new Set();
+          for (const f of files) {
+            let src = '';
+            try { src = fs.readFileSync(f, 'utf8'); } catch (e) { continue; }
+            let m;
+            while ((m = re.exec(src))) {
+              const spec = m[1] || m[2] || m[3];
+              if (!spec) continue;
+              if (spec.startsWith('.') || spec.startsWith('/') || spec.startsWith('@/')) continue;
+              if (spec.startsWith('node:')) continue;
+              const parts = spec.split('/');
+              const name = spec.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0];
+              if (!name || known.has(name) || builtins.has(name)) continue;
+              if (fs.existsSync(path.join('node_modules', name))) continue;
+              missing.add(name);
+            }
+          }
+          const list = [...missing];
+          if (!list.length) { console.log('No missing imports detected.'); process.exit(0); }
+          console.log('Installing missing imports: ' + list.join(', '));
+          try {
+            cp.execSync('bun add ' + list.map((n) => JSON.stringify(n)).join(' '), { stdio: 'inherit' });
+          } catch (e) {
+            console.error('::warning::Could not auto-install some imports: ' + e.message);
+          }
+          RESEOF
+          node /tmp/resolve-imports.cjs 2>&1 | tee -a build.log
+
       - name: 🏗️ Build
         run: |
           set -eo pipefail
