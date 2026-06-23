@@ -17,6 +17,10 @@ on:
         description: "Deploy mode: production (publish) or preview (draft)"
         required: false
         default: "production"
+      checkout_ref:
+        description: "Git ref to checkout/build; defaults to the dispatch ref"
+        required: false
+        default: ""
 
 concurrency:
   # Preview dispatches are isolated per deployment id so they never cancel an
@@ -31,6 +35,8 @@ jobs:
     steps:
       - name: 🔍 Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.checkout_ref || github.ref }}
 
       # Preflight: fail fast (with a clear, classifiable error) when the repo
       # is empty or only partially pushed. A 0-second "Build" with
@@ -378,4 +384,4 @@ jobs:
             --data @failure.json || true
           echo "Reported build failure (with logs) to KrossBuild."
 
-# KrossBuild workflow reindex: 2026-06-23T16:10:27.464Z
+# KrossBuild workflow reindex: 2026-06-23T16:12:08.965Z
