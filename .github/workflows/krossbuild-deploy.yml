@@ -6,7 +6,9 @@ name: Kross Deploy
 
 on:
   push:
-    branches: [ main, master, kross-preview ]
+    branches: [ main, master ]
+  repository_dispatch:
+    types: [ kross-preview-build ]
   workflow_dispatch:
     inputs:
       deployment_id:
@@ -25,7 +27,7 @@ on:
 concurrency:
   # Preview dispatches are isolated per deployment id so they never cancel an
   # in-flight production publish (and vice-versa). Push deploys group per ref.
-  group: kross-deploy-${{ github.ref }}-${{ github.event.inputs.deployment_id || 'push' }}
+  group: kross-deploy-${{ github.ref }}-${{ github.event.inputs.deployment_id || github.event.client_payload.deployment_id || 'push' }}
   cancel-in-progress: true
 
 jobs:
@@ -36,13 +38,13 @@ jobs:
       - name: 🔍 Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.checkout_ref || github.ref }}
+          ref: ${{ github.event.inputs.checkout_ref || github.event.client_payload.checkout_ref || github.ref }}
 
       - name: 🧭 Resolve Kross deploy context
         run: |
           set -eo pipefail
-          DEPLOYMENT_ID="${{ github.event.inputs.deployment_id || '' }}"
-          MODE="${{ github.event.inputs.mode || '' }}"
+          DEPLOYMENT_ID="${{ github.event.inputs.deployment_id || github.event.client_payload.deployment_id || '' }}"
+          MODE="${{ github.event.inputs.mode || github.event.client_payload.mode || '' }}"
           if [ -z "$MODE" ]; then
             if [ "$GITHUB_REF_NAME" = "kross-preview" ]; then MODE="preview"; else MODE="production"; fi
           fi
@@ -401,4 +403,4 @@ jobs:
             --data @failure.json || true
           echo "Reported build failure (with logs) to KrossBuild."
 
-# KrossBuild workflow reindex: 2026-06-23T16:35:25.413Z
+# KrossBuild workflow reindex: 2026-06-23T16:43:37.641Z
