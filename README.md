@@ -1,6 +1,6 @@
 # Hashgreed
 
-A project built with KrossBuild
+The new nft marketplace for Hashgreed monetized solely using KSS
 
 ## Getting Started
 

@@ -1,213 +1,148 @@
-// @waves/waves-transactions evaluates Node globals at import time AND is not
-// resolvable at build time in this environment. We therefore NEVER import it
-// here — not even via a literal `import('@waves/waves-transactions')`, which
-// esbuild still tries to resolve statically (the cause of the
-// "Unresolved import" build error). All loading is routed through the
-// centralized runtime loader, which builds the specifier from a non-literal
-// expression so the bundler leaves it as a true runtime import.
+// src/lib/blockchain/kross/assets.ts
+// Kross mainnet asset + marketplace transaction helpers.
+// All SDK access stays behind the dynamic Kross loader so Vite never bundles
+// the heavy transaction SDK at build time.
 import './polyfills';
-import { loadChainSdk } from '../loadChainSdk';
-import { KROSS_CONFIG, toWavelets } from './config';
-import { isValidKrossAddress } from './sdk';
+import { FEES, KROSS_CONFIG, explorerTxUrl, toWavelets } from './config';
+import { broadcastTx, loadTransactionsSdk } from './sdk';
 import { resolveSeed } from './resolve-seed';
-import { MARKETPLACE_CONFIG } from './deployed.config';
-import { MARKETPLACE_CONFIG } from './deployed.config';
 
-async function loadTx() {
-  const mod: any = await loadChainSdk('waves-transactions');
-  return {
-    issue: mod.issue ?? mod.default?.issue,
-    transfer: mod.transfer ?? mod.default?.transfer,
-    invokeScript: mod.invokeScript ?? mod.default?.invokeScript,
-  };
-}
-
-export interface IssueResult {
-  assetId: string;
+export interface TxResult {
+  id: string;
   txId: string;
   explorerUrl: string;
 }
 
-async function broadcast(signedTx: unknown): Promise<any> {
-  const res = await fetch(`${KROSS_CONFIG.nodeUrl}/transactions/broadcast`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(signedTx),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.message || 'Broadcast failed.');
-  }
-  return res.json();
+export interface NftMintResult extends TxResult {
+  assetId: string;
 }
 
-/**
- * Mint an NFT on Kross (quantity 1, decimals 0, non-reissuable).
- * Fee: 0.001 KSS. Metadata (image/desc) stored in the description field.
- */
-export async function createNFT(params: {
+export interface CreateNftInput {
   name: string;
-  description: string;
-  imageUrl: string;
+  description?: string;
+  imageUrl?: string;
   password?: string;
-}): Promise<IssueResult> {
-  const { name, description, imageUrl, password } = params;
-  if (!name.trim()) throw new Error('NFT name is required.');
+}
 
+export interface CreateAssetTokenInput {
+  name: string;
+  description?: string;
+  quantity: number;
+  decimals?: number;
+  reissuable?: boolean;
+  password?: string;
+}
+
+export interface InvokeMarketplaceInput {
+  dApp: string;
+  fnName: string;
+  args?: Array<{ type: string; value: string | number | boolean }>;
+  paymentKSS?: number;
+  paymentAmount?: number;
+  paymentWavelets?: number;
+  paymentAssetId?: string | null;
+  password?: string;
+}
+
+function assertName(name: string): string {
+  const clean = String(name ?? '').trim();
+  if (!clean) throw new Error('Name is required.');
+  if (clean.length > 16) throw new Error('Kross asset names must be 16 characters or fewer.');
+  return clean;
+}
+
+function normalizeDescription(description?: string): string {
+  return String(description ?? '').trim().slice(0, 1000);
+}
+
+function nftMetadata(input: CreateNftInput): string {
+  const image = String(input.imageUrl ?? '').trim();
+  const description = normalizeDescription(input.description);
+  if (!image) return description;
+  return JSON.stringify({ description, image });
+}
+
+async function signAndBroadcastIssue(params: Record<string, unknown>, password?: string): Promise<TxResult> {
   const seed = await resolveSeed(password);
-  const metadata = JSON.stringify({ description, image: imageUrl });
+  const { issue } = await loadTransactionsSdk();
+  const signed = issue(params, seed);
+  const sent = await broadcastTx(signed);
+  const id = String((sent as { id?: string }).id ?? '');
+  if (!id) throw new Error('Kross node did not return a transaction id.');
+  return { id, txId: id, explorerUrl: explorerTxUrl(id) };
+}
 
-  const { issue } = await loadTx();
-  const signedTx = issue(
+/** Mint an NFT: quantity 1, decimals 0, non-reissuable, live Kross mainnet. */
+export async function createNFT(input: CreateNftInput): Promise<NftMintResult> {
+  const tx = await signAndBroadcastIssue(
     {
-      name: name.slice(0, 16),
-      description: metadata.slice(0, 1000),
+      name: assertName(input.name),
+      description: nftMetadata(input),
       quantity: 1,
       decimals: 0,
       reissuable: false,
-      fee: toWavelets(KROSS_CONFIG.fees.issueNFT),
       chainId: KROSS_CONFIG.chainId,
+      fee: FEES.ISSUE_NFT,
     },
-    seed
+    input.password,
   );
-
-  const data = await broadcast(signedTx);
-  return {
-    assetId: data.id,
-    txId: data.id,
-    explorerUrl: `${KROSS_CONFIG.explorerUrl}/tx/${data.id}`,
-  };
+  return { ...tx, assetId: tx.id };
 }
 
-/**
- * Issue a fungible token on Kross. Fee: 1 KSS.
- */
-export async function createAssetToken(params: {
-  name: string;
-  description: string;
-  quantity: number;
-  decimals: number;
-  reissuable: boolean;
-  password?: string;
-}): Promise<IssueResult> {
-  const { name, description, quantity, decimals, reissuable, password } = params;
-  if (!name.trim()) throw new Error('Token name is required.');
-  if (quantity <= 0) throw new Error('Quantity must be greater than 0.');
+/** Issue a fungible Kross asset/token on live mainnet. */
+export async function createAssetToken(input: CreateAssetTokenInput): Promise<TxResult> {
+  const decimals = Math.max(0, Math.min(8, Number(input.decimals ?? 0)));
+  const quantity = Number(input.quantity);
+  if (!Number.isFinite(quantity) || quantity <= 0) throw new Error('Quantity must be greater than zero.');
+  const scaledQuantity = Math.round(quantity * Math.pow(10, decimals));
 
-  const seed = await resolveSeed(password);
-
-  const { issue } = await loadTx();
-  const signedTx = issue(
+  return signAndBroadcastIssue(
     {
-      name: name.slice(0, 16),
-      description: description.slice(0, 1000),
-      quantity: Math.round(quantity * Math.pow(10, decimals)),
+      name: assertName(input.name),
+      description: normalizeDescription(input.description),
+      quantity: scaledQuantity,
       decimals,
-      reissuable,
-      fee: toWavelets(KROSS_CONFIG.fees.issueAsset),
+      reissuable: Boolean(input.reissuable),
       chainId: KROSS_CONFIG.chainId,
+      fee: FEES.ISSUE_ASSET,
     },
-    seed
+    input.password,
   );
-
-  const data = await broadcast(signedTx);
-  return {
-    assetId: data.id,
-    txId: data.id,
-    explorerUrl: `${KROSS_CONFIG.explorerUrl}/tx/${data.id}`,
-  };
 }
 
-/**
- * Transfer an NFT/token to another address. Fee: 0.001 KSS.
- */
-export async function transferNFT(params: {
-  recipient: string;
-  assetId: string;
-  password?: string;
-}): Promise<{ txId: string; explorerUrl: string }> {
-  const { recipient, assetId, password } = params;
-  if (!isValidKrossAddress(recipient)) {
-    throw new Error('Invalid recipient address (must start with 3K).');
-  }
-  const seed = await resolveSeed(password);
+/** Invoke the configured Kross marketplace dApp with optional native/NFT payment. */
+export async function invokeMarketplace(input: InvokeMarketplaceInput): Promise<TxResult> {
+  const dApp = String(input.dApp ?? '').trim();
+  const fnName = String(input.fnName ?? '').trim();
+  if (!dApp) throw new Error('Marketplace dApp address is not configured.');
+  if (!fnName) throw new Error('Marketplace function name is required.');
 
-  const { transfer } = await loadTx();
-  const signedTx = transfer(
-    {
-      recipient,
-      amount: 1,
-      assetId,
-      fee: toWavelets(KROSS_CONFIG.fees.transfer),
-      chainId: KROSS_CONFIG.chainId,
-    },
-    seed
-  );
+  const seed = await resolveSeed(input.password);
+  const { invokeScript } = await loadTransactionsSdk();
 
-  const data = await broadcast(signedTx);
-  return {
-    txId: data.id,
-    explorerUrl: `${KROSS_CONFIG.explorerUrl}/tx/${data.id}`,
-  };
-}
-
-/**
- * Invoke a marketplace dApp (list / buy). Fee: 0.005 KSS.
- * KSS payment is attached for buys.
- */
-export async function invokeMarketplace(params: {
-  dApp: string;
-  fnName: string;
-  args: Array<{ type: string; value: any }>;
-  paymentKSS?: number;
-  paymentAssetId?: string | null;
-  /**
-   * Raw payment amount in the asset's smallest unit. Use this to attach a
-   * non-KSS asset (e.g. an NFT, amount 1) where `toWavelets` conversion is
-   * NOT appropriate. When provided it takes precedence over `paymentKSS`.
-   */
-  paymentAmount?: number;
-  password?: string;
-}): Promise<{ txId: string; explorerUrl: string }> {
-  const { dApp, fnName, args, paymentKSS, paymentAssetId, paymentAmount, password } =
-    params;
-  if (!isValidKrossAddress(dApp)) {
-    throw new Error('Invalid dApp address.');
-  }
-  const seed = await resolveSeed(password);
-
-  // KSS is the NATIVE currency of the Kross blockchain and is represented by
-  // `null` (not an explicit assetId) in payments. Default to native KSS.
-  const nativeAsset =
-    paymentAssetId !== undefined ? paymentAssetId : MARKETPLACE_CONFIG.nativeAssetId;
-
-  // Build the payment array:
-  //  - If `paymentAmount` is given, attach exactly that raw amount of the
-  //    chosen asset (NFTs: assetId=base58 id, amount=1, no wavelet scaling).
-  //  - Else if `paymentKSS` is given, attach native KSS converted to wavelets.
-  //  - Else attach no payment (e.g. cancelListing).
-  let payment: Array<{ assetId: string | null; amount: number }> = [];
-  if (paymentAmount && paymentAmount > 0) {
-    payment = [{ assetId: nativeAsset ?? null, amount: paymentAmount }];
-  } else if (paymentKSS && paymentKSS > 0) {
-    payment = [{ assetId: nativeAsset ?? null, amount: toWavelets(paymentKSS) }];
+  const payment: Array<{ amount: number; assetId: string | null }> = [];
+  if (typeof input.paymentKSS === 'number' && input.paymentKSS > 0) {
+    payment.push({ amount: toWavelets(input.paymentKSS), assetId: null });
+  } else {
+    const amount = Number(input.paymentWavelets ?? input.paymentAmount ?? 0);
+    if (Number.isFinite(amount) && amount > 0) {
+      payment.push({ amount: Math.round(amount), assetId: input.paymentAssetId ?? null });
+    }
   }
 
-  const { invokeScript } = await loadTx();
-  const signedTx = invokeScript(
+  const signed = invokeScript(
     {
       dApp,
-      call: { function: fnName, args: args as any },
+      call: { function: fnName, args: input.args ?? [] },
       payment,
-      fee: toWavelets(KROSS_CONFIG.fees.invoke),
       chainId: KROSS_CONFIG.chainId,
+      fee: FEES.INVOKE_SCRIPT,
     },
-    seed
+    seed,
   );
 
-  const data = await broadcast(signedTx);
-  return {
-    txId: data.id,
-    explorerUrl: `${KROSS_CONFIG.explorerUrl}/tx/${data.id}`,
-  };
+  const sent = await broadcastTx(signed);
+  const id = String((sent as { id?: string }).id ?? '');
+  if (!id) throw new Error('Kross node did not return a transaction id.');
+  return { id, txId: id, explorerUrl: explorerTxUrl(id) };
 }
