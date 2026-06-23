@@ -6,7 +6,7 @@ name: Kross Deploy
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main, master, kross-preview ]
   workflow_dispatch:
     inputs:
       deployment_id:
@@ -37,6 +37,23 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.inputs.checkout_ref || github.ref }}
+
+      - name: 🧭 Resolve Kross deploy context
+        run: |
+          set -eo pipefail
+          DEPLOYMENT_ID="${{ github.event.inputs.deployment_id || '' }}"
+          MODE="${{ github.event.inputs.mode || '' }}"
+          if [ -z "$MODE" ]; then
+            if [ "$GITHUB_REF_NAME" = "kross-preview" ]; then MODE="preview"; else MODE="production"; fi
+          fi
+          if [ -z "$DEPLOYMENT_ID" ] && [ -f ".krossbuild/preview.json" ]; then
+            DEPLOYMENT_ID="$(node -e "try{const j=require('./.krossbuild/preview.json');process.stdout.write(j.deploymentId||'')}catch(e){}")"
+            FILE_MODE="$(node -e "try{const j=require('./.krossbuild/preview.json');process.stdout.write(j.mode||'')}catch(e){}")"
+            if [ -n "$FILE_MODE" ]; then MODE="$FILE_MODE"; fi
+          fi
+          echo "KROSS_DEPLOYMENT_ID=$DEPLOYMENT_ID" >> "$GITHUB_ENV"
+          echo "KROSS_MODE=$MODE" >> "$GITHUB_ENV"
+          echo "Resolved Kross context: mode=$MODE deploymentId=${DEPLOYMENT_ID:-<new>}"
 
       # Preflight: fail fast (with a clear, classifiable error) when the repo
       # is empty or only partially pushed. A 0-second "Build" with
@@ -342,8 +359,8 @@ jobs:
             -H "apikey: $ANON_KEY" \
             -H "x-kross-deploy-token: $DEPLOY_TOKEN" \
             -F "projectId=$PROJECT_ID" \
-            -F "deploymentId=${{ github.event.inputs.deployment_id }}" \
-            -F "mode=${{ github.event.inputs.mode }}" \
+            -F "deploymentId=$KROSS_DEPLOYMENT_ID" \
+            -F "mode=$KROSS_MODE" \
             -F "artifact=@$GITHUB_WORKSPACE/dist.zip")
           echo "Response ($HTTP):"; cat response.json; echo
           if [ "$HTTP" -ge 300 ]; then echo "::error::Deploy upload failed"; exit 1; fi
@@ -371,7 +388,7 @@ jobs:
           LOG_TAIL="$(tail -c 12000 build.log 2>/dev/null || true)"
           jq -n \
             --arg projectId "$PROJECT_ID" \
-            --arg deploymentId "${{ github.event.inputs.deployment_id }}" \
+            --arg deploymentId "$KROSS_DEPLOYMENT_ID" \
             --arg reason "GitHub Actions build failed" \
             --arg runUrl "$RUN_URL" \
             --arg logs "$LOG_TAIL" \
@@ -384,4 +401,4 @@ jobs:
             --data @failure.json || true
           echo "Reported build failure (with logs) to KrossBuild."
 
-# KrossBuild workflow reindex: 2026-06-23T16:21:24.562Z
+# KrossBuild workflow reindex: 2026-06-23T16:35:25.413Z
