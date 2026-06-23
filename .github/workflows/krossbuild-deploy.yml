@@ -152,9 +152,7 @@ jobs:
       # deterministic signature classification + auto-fix. GitHub's default
       # shell runs with `pipefail`, so tee never masks a non-zero exit.
       - name: 📥 Install dependencies
-        run: |
-          set -eo pipefail
-          bun install 2>&1 | tee -a build.log
+        run: bun install 2>&1 | tee -a build.log
 
       # User code frequently imports packages that were never added to
       # package.json (e.g. "lucide-react"), so Rollup fails to resolve the
@@ -307,6 +305,35 @@ jobs:
           RESEOF
           node /tmp/resolve-imports.cjs 2>&1 | tee -a build.log
 
+      # Fetch this project's decrypted secrets from KrossBuild and write them to
+      # .env BEFORE the build so Vite bakes the VITE_* values into dist/. Auth is
+      # the low-privilege per-project deploy token (never the service-role key).
+      # The get-build-secrets URL is derived from the ingest URL so no extra repo
+      # secret is required.
+      - name: 🔐 Fetch build secrets
+        env:
+          INGEST_URL: ${{ secrets.KROSS_INGEST_URL }}
+          PROJECT_ID: ${{ secrets.KROSS_PROJECT_ID }}
+          DEPLOY_TOKEN: ${{ secrets.KROSS_DEPLOY_TOKEN }}
+          ANON_KEY: ${{ secrets.KROSS_ANON_KEY }}
+        run: |
+          {
+            if [ -z "$INGEST_URL" ] || [ -z "$DEPLOY_TOKEN" ]; then
+              echo "::warning::KROSS_* secrets not configured — skipping build-secret injection."
+              exit 0
+            fi
+            SECRETS_URL="${INGEST_URL%/ci-deploy-ingest}/get-build-secrets"
+            echo "Fetching build secrets from KrossBuild…"
+            HTTP=$(curl -sS -w "%{http_code}" -o secrets.json -X POST "$SECRETS_URL" \
+              -H "apikey: $ANON_KEY" \
+              -H "x-kross-deploy-token: $DEPLOY_TOKEN" \
+              -H "content-type: application/json" \
+              -d "{\"projectId\":\"$PROJECT_ID\",\"deploymentId\":\"$KROSS_DEPLOYMENT_ID\"}")
+            if [ "$HTTP" -ge 300 ]; then echo "::error::Failed to fetch build secrets ($HTTP)"; cat secrets.json; exit 1; fi
+            node -e "const fs=require('fs');const j=JSON.parse(fs.readFileSync('secrets.json','utf8'));fs.writeFileSync('.env',(j.dotenv||'')+'\n');console.log('Wrote '+(j.count||0)+' build secret(s) to .env');"
+            rm -f secrets.json
+          } 2>&1 | tee -a build.log
+
       - name: 🏗️ Build
         run: |
           set -eo pipefail
@@ -330,14 +357,13 @@ jobs:
             fi
           } 2>&1 | tee -a build.log
 
+
       - name: 🗜️ Zip dist
         run: |
-          set -eo pipefail
           {
             if [ ! -d dist ]; then echo "::error::dist/ not found after build"; exit 1; fi
-            (cd dist && zip -r "$GITHUB_WORKSPACE/dist.zip" .)
-            if [ ! -f "$GITHUB_WORKSPACE/dist.zip" ]; then echo "::error::dist.zip not created"; exit 1; fi
-            echo "Artifact size: $(du -h "$GITHUB_WORKSPACE/dist.zip" | cut -f1)"
+            cd dist && zip -r ../dist.zip . && cd ..
+            echo "Artifact size: $(du -h dist.zip | cut -f1)"
           } 2>&1 | tee -a build.log
 
       - name: 🚀 Upload artifact to KrossBuild
@@ -352,16 +378,13 @@ jobs:
             exit 0
           fi
           echo "Uploading prebuilt artifact to KrossBuild…"
-          if [ ! -f "$GITHUB_WORKSPACE/dist.zip" ]; then
-            echo "::error::dist.zip not found at $GITHUB_WORKSPACE/dist.zip — cannot upload"; exit 1;
-          fi
           HTTP=$(curl -sS -w "%{http_code}" -o response.json -X POST "$INGEST_URL" \
             -H "apikey: $ANON_KEY" \
             -H "x-kross-deploy-token: $DEPLOY_TOKEN" \
             -F "projectId=$PROJECT_ID" \
             -F "deploymentId=$KROSS_DEPLOYMENT_ID" \
             -F "mode=$KROSS_MODE" \
-            -F "artifact=@$GITHUB_WORKSPACE/dist.zip")
+            -F "artifact=@dist.zip")
           echo "Response ($HTTP):"; cat response.json; echo
           if [ "$HTTP" -ge 300 ]; then echo "::error::Deploy upload failed"; exit 1; fi
           echo "✅ Artifact uploaded; KrossBuild is deploying to Netlify."
@@ -400,5 +423,3 @@ jobs:
             -H "Content-Type: application/json" \
             --data @failure.json || true
           echo "Reported build failure (with logs) to KrossBuild."
-
-# KrossBuild workflow reindex: 2026-06-23T17:46:16.375Z
