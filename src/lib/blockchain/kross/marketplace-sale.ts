@@ -1,9 +1,9 @@
 // src/lib/blockchain/kross/marketplace-sale.ts
-import { MARKETPLACE_CONFIG } from './config';
+import { KROSS_CONFIG } from './deployed.config';
 import type { KrossSigner } from './signer';
 import { getListing } from './marketplace-listings';
 
-const MARKETPLACE_DAPP = MARKETPLACE_CONFIG.dAppAddress;
+const { MARKETPLACE_DAPP } = KROSS_CONFIG;
 
 /**
  * Buy a listed NFT atomically. Reads the on-chain price, attaches exactly that
