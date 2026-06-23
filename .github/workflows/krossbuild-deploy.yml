@@ -145,14 +145,99 @@ jobs:
           const cp = require('child_process');
           let pkg = {};
           try { pkg = JSON.parse(fs.readFileSync('package.json', 'utf8')); } catch (e) { process.exit(0); }
-          const known = new Set([
-            ...Object.keys(pkg.dependencies || {}),
-            ...Object.keys(pkg.devDependencies || {}),
-            ...Object.keys(pkg.peerDependencies || {}),
-            ...Object.keys(pkg.optionalDependencies || {}),
-          ]);
           const builtins = new Set(require('module').builtinModules);
           const exts = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']);
+          const packagePart = '(?![._])[a-z0-9][a-z0-9._-]*';
+          const packageNameRe = new RegExp('^(?:@' + packagePart + '\/' + packagePart + '|' + packagePart + ')$');
+          const isValidPackageName = (name) => (
+            typeof name === 'string' && name.length > 0 && name.length <= 214 &&
+            !name.includes('..') && packageNameRe.test(name)
+          );
+          const packageNameFromSpecifier = (spec) => {
+            if (typeof spec !== 'string') return null;
+            const clean = spec.trim();
+            if (!clean || clean.length > 300) return null;
+            if (clean.startsWith('.') || clean.startsWith('/') || clean.startsWith('@/') || clean.startsWith('node:')) return null;
+            const forbidden = [' ', '\t', '\n', '\r', '"', "'", String.fromCharCode(96), '$', '(', ')', '{', '}', '<', '>', '|', '&', ';', '\\'];
+            if (forbidden.some((ch) => clean.includes(ch))) return null;
+            const parts = clean.split('/');
+            const name = clean.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0];
+            return isValidPackageName(name) ? name : null;
+          };
+          const stripComments = (src) => {
+            let out = '', inStr = false, q = '', esc = false;
+            for (let i = 0; i < src.length; i++) {
+              const c = src[i], n = src[i + 1];
+              if (inStr) {
+                out += c;
+                if (esc) esc = false;
+                else if (c === '\\') esc = true;
+                else if (c === q) inStr = false;
+                continue;
+              }
+              if (c === '"' || c === "'" || c === String.fromCharCode(96)) { inStr = true; q = c; out += c; continue; }
+              if (c === '/' && n === '/') { while (i < src.length && src[i] !== '\n') i++; out += '\n'; continue; }
+              if (c === '/' && n === '*') { i += 2; while (i < src.length && !(src[i] === '*' && src[i + 1] === '/')) { out += src[i] === '\n' ? '\n' : ' '; i++; } i++; continue; }
+              out += c;
+            }
+            return out;
+          };
+          const collectSpecifiers = (source) => {
+            const src = stripComments(source);
+            const specs = new Set();
+            const isIdent = (ch) => !!ch && /[A-Za-z0-9_$]/.test(ch);
+            const startsWord = (i, word) => src.startsWith(word, i) && !isIdent(src[i - 1]) && !isIdent(src[i + word.length]);
+            const skipString = (start) => {
+              const q = src[start];
+              let esc = false;
+              for (let i = start + 1; i < src.length; i++) {
+                const c = src[i];
+                if (esc) { esc = false; continue; }
+                if (c === '\\') { esc = true; continue; }
+                if (c === q) return i;
+              }
+              return src.length - 1;
+            };
+            const readCallString = (start) => {
+              let i = start;
+              while (/s/.test(src[i] || '')) i++;
+              if (src[i] !== '(') return null;
+              i++;
+              while (/s/.test(src[i] || '')) i++;
+              if (src[i] !== '"' && src[i] !== "'") return null;
+              const q = src[i++];
+              let value = '', esc = false;
+              for (; i < src.length; i++) {
+                const c = src[i];
+                if (esc) { value += c; esc = false; continue; }
+                if (c === '\\') { esc = true; continue; }
+                if (c === q) return { value, end: i };
+                value += c;
+              }
+              return null;
+            };
+            for (let i = 0; i < src.length; i++) {
+              const c = src[i];
+              if (c === '"' || c === "'" || c === String.fromCharCode(96)) { i = skipString(i); continue; }
+              if (startsWord(i, 'import')) {
+                const stmt = src.slice(i, i + 1600);
+                const m = stmt.match(/^imports+(?:types+)?(?:[^;]*?s+froms*)?['"]([^'"
+]+)['"]/s);
+                if (m) specs.add(m[1]);
+                const call = readCallString(i + 'import'.length);
+                if (call) { specs.add(call.value); i = call.end; }
+              } else if (startsWord(i, 'export')) {
+                const stmt = src.slice(i, i + 1600);
+                const m = stmt.match(/^exports+(?:types+)?[^;]*?s+froms*['"]([^'"
+]+)['"]/s);
+                if (m) specs.add(m[1]);
+              } else if (startsWord(i, 'require')) {
+                const call = readCallString(i + 'require'.length);
+                if (call) { specs.add(call.value); i = call.end; }
+              }
+            }
+            return specs;
+          };
           const files = [];
           const walk = (d) => {
             let ents = [];
@@ -165,19 +250,12 @@ jobs:
             }
           };
           if (fs.existsSync('src')) walk('src'); else walk('.');
-          const re = /(?:import|export)[^;]*?from\s*['"]([^'"]+)['"]|import\s*\(\s*['"]([^'"]+)['"]\s*\)|require\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
           const missing = new Set();
           for (const f of files) {
             let src = '';
             try { src = fs.readFileSync(f, 'utf8'); } catch (e) { continue; }
-            let m;
-            while ((m = re.exec(src))) {
-              const spec = m[1] || m[2] || m[3];
-              if (!spec) continue;
-              if (spec.startsWith('.') || spec.startsWith('/') || spec.startsWith('@/')) continue;
-              if (spec.startsWith('node:')) continue;
-              const parts = spec.split('/');
-              const name = spec.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0];
+            for (const spec of collectSpecifiers(src)) {
+              const name = packageNameFromSpecifier(spec);
               if (!name || builtins.has(name)) continue;
               // Heal even DECLARED packages: if a dep is listed in package.json
               // but bun install never actually wrote it to node_modules (bad
@@ -197,7 +275,9 @@ jobs:
           if (!list.length) { console.log('No missing imports detected.'); process.exit(0); }
           console.log('Installing missing imports: ' + list.join(', '));
           try {
-            cp.execSync('bun add ' + list.map((n) => JSON.stringify(n)).join(' '), { stdio: 'inherit' });
+            const result = cp.spawnSync('bun', ['add', ...list], { stdio: 'inherit', shell: false });
+            if (result.error) throw result.error;
+            if (result.status !== 0) throw new Error('bun add exited with code ' + result.status);
           } catch (e) {
             console.error('::warning::Could not auto-install some imports: ' + e.message);
           }
