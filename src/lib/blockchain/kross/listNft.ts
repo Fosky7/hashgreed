@@ -1,6 +1,6 @@
 // src/lib/blockchain/kross/listNft.ts
 import { loadChainSdk } from "../loadChainSdk";
-import { MARKETPLACE_DAPP } from "./deployed.config";
+import { MARKETPLACE_DAPP } from "./marketplace.config";
 
 const NODE_URL = "https://nodes.krossexplorer.com";
 const CHAIN_ID = "N"; // Kross

@@ -1,26 +1,38 @@
-// Shared movie & NFT domain types.
-// Centralized type definitions used across pages, hooks, components and data modules.
-
+// src/types/movie.ts
 export interface MovieCategory {
   id: string;
-  slug: string;
+  slug?: string;
   name: string;
   description?: string;
   banner?: string;
   thumbnail?: string;
+  icon?: string;
+  coverImage?: string;
+  itemCount?: number;
+  trending?: boolean;
 }
 
 export interface Movie {
   id: string;
   title: string;
-  slug: string;
+  slug?: string;
   categoryId: string;
   poster: string;
   description?: string;
-  year?: number;
+  year: number;
+  rating: number;
+  genre: string;
+  director: string;
   priceEth?: number;
   creator?: string;
 }
+
+export type MovieSortOption =
+  | 'rating-asc'
+  | 'rating-desc'
+  | 'year-asc'
+  | 'year-desc'
+  | 'title-asc';
 
 export interface CategorizedNft {
   id: string;

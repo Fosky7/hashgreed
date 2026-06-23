@@ -15,23 +15,49 @@ export interface UseSession extends SessionState {
   lock: () => void;
   isUnlocked: boolean;
   hasWallet: boolean;
+  // Compatibility fields used by wallet components.
+  unlocked: boolean;
+  busy: boolean;
+  error: string | null;
 }
 
 export function useSession(): UseSession {
   const [state, setState] = useState<SessionState>(getState());
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => subscribe(setState), []);
 
-  const unlock = useCallback((password: string) => unlockSession(password), []);
+  const unlock = useCallback(async (password: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const ok = await unlockSession(password);
+      if (!ok) setError("Invalid password");
+      return ok;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unlock failed");
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
   const lock = useCallback(() => lockSession(), []);
 
   return {
     ...state,
     isUnlocked: isUnlocked(),
+    unlocked: isUnlocked(),
     hasWallet: hasStoredWallet(),
+    busy,
+    error,
     unlock,
     lock,
   };
 }
+
+/** Compatibility alias expected by wallet components. */
+export const useKrossSession = useSession;
 
 export default useSession;

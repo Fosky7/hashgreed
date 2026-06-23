@@ -9,12 +9,22 @@ export interface Listing {
   assetId: string;
   /** Price in whole KSS. */
   price: number;
+  /** Price in KSS (alias used by some consumers). */
+  priceKSS: number;
+  /** Price in wavelets. */
+  priceWavelets: number;
   /** Seller / lister address. */
   seller: string;
   /** Category label. */
   category: string;
   /** Whether the listing is currently active. */
   active: boolean;
+}
+
+export interface MarketplaceFees {
+  commissionBps: number;
+  royaltyBps: number;
+  feeWallet: string;
 }
 
 /** Build a data-key fetch URL for the dApp address. */
@@ -36,6 +46,14 @@ async function readKey<T = unknown>(
   }
 }
 
+// Simple in-memory cache for listings.
+let _listingsCache: Listing[] | null = null;
+
+/** Drop the cached listings so the next read refetches from the node. */
+export function invalidateListingsCache(): void {
+  _listingsCache = null;
+}
+
 /**
  * Fetch a single listing by assetId so the UI can pre-fill the current price
  * and verify the connected wallet is the lister before allowing an update.
@@ -53,16 +71,54 @@ export async function getListing(assetId: string): Promise<Listing | null> {
     readKey<string>(dApp, `${base}_category`),
   ]);
 
-  // No listing data at all -> not found.
   if (priceRaw == null && seller == null) return null;
 
+  const priceWavelets = priceRaw != null ? Number(priceRaw) : 0;
   return {
     assetId,
     price: priceRaw != null ? fromBaseUnits(priceRaw) : 0,
+    priceKSS: priceRaw != null ? fromBaseUnits(priceRaw) : 0,
+    priceWavelets,
     seller: seller ?? '',
     category: category ?? '',
     active: active === true,
   };
+}
+
+/**
+ * Fetch ALL active listings from the dApp. Reads every `listing_*_price` key
+ * then assembles full Listing objects. Cached until invalidated.
+ */
+export async function getListings(): Promise<Listing[]> {
+  if (_listingsCache) return _listingsCache;
+
+  const dApp = KROSS_CONFIG.marketplaceDApp;
+  if (!dApp) return [];
+
+  try {
+    const res = await fetch(
+      `${KROSS_CONFIG.nodeUrl}/addresses/data/${dApp}?matches=${encodeURIComponent(
+        'listing_.*_price'
+      )}`
+    );
+    if (!res.ok) return [];
+    const entries = (await res.json()) as Array<{ key: string; value: number }>;
+
+    const assetIds = entries
+      .map((e) => {
+        const m = e.key.match(/^listing_(.+)_price$/);
+        return m ? m[1] : null;
+      })
+      .filter((x): x is string => !!x);
+
+    const listings = await Promise.all(assetIds.map((id) => getListing(id)));
+    _listingsCache = listings.filter(
+      (l): l is Listing => !!l && l.priceWavelets > 0
+    );
+    return _listingsCache;
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -80,6 +136,22 @@ export async function getCategories(): Promise<string[]> {
     .filter(Boolean);
 }
 
+/** Read on-chain fee/royalty params; falls back to zeros when unconfigured. */
+export async function getMarketplaceFees(): Promise<MarketplaceFees> {
+  const dApp = KROSS_CONFIG.marketplaceDApp;
+  if (!dApp) return { commissionBps: 0, royaltyBps: 0, feeWallet: '' };
+  const [fee, royalty, wallet] = await Promise.all([
+    readKey<number>(dApp, 'feeBps'),
+    readKey<number>(dApp, 'royaltyBps'),
+    readKey<string>(dApp, 'feeWallet'),
+  ]);
+  return {
+    commissionBps: fee != null ? Number(fee) : 0,
+    royaltyBps: royalty != null ? Number(royalty) : 0,
+    feeWallet: wallet ?? '',
+  };
+}
+
 /**
  * Fetch all listings for a given category. Uses the node's data regex search to
  * collect matching keys, then assembles Listing objects.
@@ -91,7 +163,6 @@ export async function getListingsByCategory(
   if (!dApp || !category) return [];
 
   try {
-    // Pull all `listing_*_category` entries and match the requested category.
     const res = await fetch(
       `${KROSS_CONFIG.nodeUrl}/addresses/data/${dApp}?matches=${encodeURIComponent(
         'listing_.*_category'
@@ -110,9 +181,7 @@ export async function getListingsByCategory(
       .filter((x): x is string => !!x);
 
     const listings = await Promise.all(assetIds.map((id) => getListing(id)));
-    return listings.filter(
-      (l): l is Listing => !!l && l.active
-    );
+    return listings.filter((l): l is Listing => !!l && l.active);
   } catch {
     return [];
   }
