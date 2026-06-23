@@ -1,110 +1,97 @@
 // src/lib/blockchain/kross/sdk.ts
-//
-// IMPORTANT: @waves/ts-lib-crypto evaluates Node globals (Buffer) at import
-// time and crashes in the browser before polyfills run. We therefore NEVER
-// statically import it here. It is loaded lazily inside the async derivation
-// path, after './polyfills' has installed the globals.
-import './polyfills';
-import { loadChainSdk } from '../loadChainSdk';
-import { KROSS_CONFIG } from './config';
-import { SEED_WORD_LIST } from './word-list';
+import { loadChainSdk } from "@/lib/blockchain/loadChainSdk";
+import { NODE_URL, CHAIN_ID, FEES, toWavelets } from "./config";
 
-// Lazily load the crypto lib via the centralized runtime loader so esbuild
-// never tries to resolve '@waves/ts-lib-crypto' at build time and so the
-// Node-global polyfills are guaranteed to be installed first.
-async function loadCrypto() {
-  const mod: any = await loadChainSdk('ts-lib-crypto');
-  const address = mod.address ?? mod.default?.address;
-  const publicKey = mod.publicKey ?? mod.default?.publicKey;
-  const privateKey = mod.privateKey ?? mod.default?.privateKey;
-  if (!address || !publicKey || !privateKey) {
-    throw new Error('Kross crypto functions failed to load.');
-  }
-  return { address, publicKey, privateKey };
+/** Canonical dynamic loader for @waves/waves-transactions (loaded after globals). */
+export async function loadTransactionsSdk() {
+  return loadChainSdk("kross", "@waves/waves-transactions");
 }
 
-// The esm.sh build of @waves/ts-lib-crypto does not re-export `seedWordList`,
-// so we rely on a bundled local word list for deterministic seed generation.
-const seedWordList = SEED_WORD_LIST;
+/** Dynamic loader for @waves/ts-lib-crypto. */
+export async function loadCryptoSdk() {
+  return loadChainSdk("kross", "@waves/ts-lib-crypto");
+}
 
 export interface KrossWallet {
   seedPhrase: string;
   privateKey: string;
   publicKey: string;
   address: string;
+  encodedSeed: string;
 }
 
-/**
- * Generate a 15-word seed phrase from the bundled Kross/Waves word list.
- * Uses the platform CSPRNG (crypto.getRandomValues) so no external SDK call
- * is required for generation. NOTE: seed material must only be handled inside
- * this SDK layer, never passed raw through React components.
- */
-function generateSeedPhrase(): string {
-  const words: string[] = [];
-  const rng = globalThis.crypto;
-  for (let i = 0; i < 15; i++) {
-    const arr = new Uint32Array(1);
-    rng.getRandomValues(arr);
-    const idx = arr[0] % seedWordList.length;
-    words.push(seedWordList[idx]);
-  }
-  return words.join(' ');
+export async function createWallet(): Promise<KrossWallet> {
+  const crypto = await loadCryptoSdk();
+  return deriveWallet(crypto, crypto.randomSeed(15));
 }
 
-/**
- * Derive all wallet credentials from a seed phrase for the Kross chain.
- * Crypto helpers are loaded lazily (post-polyfill, build-safe), so this is async.
- */
-async function deriveWallet(seedPhrase: string): Promise<KrossWallet> {
-  const { address, publicKey, privateKey } = await loadCrypto();
+export async function importWallet(seedPhrase: string): Promise<KrossWallet> {
+  const trimmed = seedPhrase.trim().replace(/\s+/g, " ");
+  if (!isValidSeedPhrase(trimmed)) throw new Error("Invalid seed phrase: expected 15 words");
+  const crypto = await loadCryptoSdk();
+  return deriveWallet(crypto, trimmed);
+}
+
+function deriveWallet(crypto: any, seedPhrase: string): KrossWallet {
   return {
     seedPhrase,
-    privateKey: privateKey(seedPhrase),
-    publicKey: publicKey(seedPhrase),
-    address: address(seedPhrase, KROSS_CONFIG.chainId),
+    privateKey: crypto.privateKey(seedPhrase),
+    publicKey: crypto.publicKey(seedPhrase),
+    address: crypto.address(seedPhrase, CHAIN_ID),
+    encodedSeed: crypto.base58Encode(crypto.stringToBytes(seedPhrase)),
   };
 }
 
-/**
- * Create a brand new Kross wallet (15-word seed, 3K address).
- */
-export async function createWallet(): Promise<KrossWallet> {
-  const seedPhrase = generateSeedPhrase();
-  return deriveWallet(seedPhrase);
-}
-
-/**
- * Import / restore a Kross wallet from an existing 15-word seed phrase.
- */
-export async function importWallet(seedPhrase: string): Promise<KrossWallet> {
-  const trimmed = seedPhrase.trim().replace(/\s+/g, ' ');
-  if (!isValidSeedPhrase(trimmed)) {
-    throw new Error('Invalid seed phrase. Expected 15 words.');
-  }
-  return deriveWallet(trimmed);
-}
-
-/**
- * Official Kross address format (source of truth: decentralizedafrica.com/sdk).
- * Must start with the literal `3K` prefix and be followed by exactly 33
- * ASCII-alphanumeric characters, for a total length of 35.
- */
-export const KROSS_ADDRESS_REGEX = /^3K[a-zA-Z0-9]{33}$/;
-
-/**
- * Validate a Kross address.
- * Enforces the SDK rule: starts with `3K` and matches /^3K[a-zA-Z0-9]{33}$/.
- * Rejects non-strings and any address containing non-alphanumeric symbols.
- */
-export function isValidKrossAddress(addr: string): boolean {
-  return typeof addr === 'string' && KROSS_ADDRESS_REGEX.test(addr);
-}
-
-/**
- * Basic seed-phrase validation: must be exactly 15 words.
- */
 export function isValidSeedPhrase(seedPhrase: string): boolean {
-  const words = seedPhrase.trim().split(/\s+/);
-  return words.length === 15 && words.every((w) => w.length > 0);
+  if (!seedPhrase || typeof seedPhrase !== "string") return false;
+  return seedPhrase.trim().split(/\s+/).filter(Boolean).length === 15;
+}
+
+export function isValidKrossAddress(address: string): boolean {
+  return typeof address === "string" && address.startsWith("3K") && address.length >= 35;
+}
+
+export async function transferKSS(
+  recipient: string,
+  amountKSS: number,
+  seedPhrase: string,
+  attachment = "",
+  nodeUrl: string = NODE_URL,
+) {
+  if (!isValidKrossAddress(recipient)) throw new Error("Invalid Kross address");
+  const { transfer, broadcast, waitForTx } = await loadTransactionsSdk();
+  const tx = transfer(
+    {
+      recipient,
+      amount: toWavelets(amountKSS),
+      assetId: null,
+      attachment: attachment || undefined,
+      fee: FEES.TRANSFER,
+      chainId: CHAIN_ID,
+    },
+    seedPhrase,
+  );
+  const result = await broadcast(tx, nodeUrl);
+  await waitForTx(result.id, { apiBase: nodeUrl });
+  return result;
+}
+
+/** Broadcast a pre-signed transaction and wait for confirmation. */
+export async function broadcastTx(signedTx: unknown, nodeUrl: string = NODE_URL) {
+  const { broadcast, waitForTx } = await loadTransactionsSdk();
+  const result = await broadcast(signedTx as any, nodeUrl);
+  await waitForTx(result.id, { apiBase: nodeUrl });
+  return result;
+}
+
+/**
+ * Resolve the managed seed for the unlocked session, gated by password.
+ * Seed material is decrypted ONLY inside this SDK/session layer and never
+ * returned to React components.
+ */
+export async function getSeedFromPassword(password: string): Promise<string> {
+  const { getSessionSeed } = await import("./session");
+  const seed = await getSessionSeed(password);
+  if (!seed) throw new Error("Unable to unlock wallet: invalid password or no active session");
+  return seed;
 }

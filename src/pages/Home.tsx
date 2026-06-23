@@ -89,7 +89,7 @@ const HomePage: React.FC = () => {
                   }}
                 />
                 <div
-                  className="absolute inset-0 bg-gradient-to-t lg:bg-gradient-to-l from-black/50 via-transparent to-transparent"
+                  className="absolute inset-0 pointer-events-none bg-gradient-to-t lg:bg-gradient-to-l from-black/50 via-transparent to-transparent"
                   aria-hidden="true"
                 />
               </div>
