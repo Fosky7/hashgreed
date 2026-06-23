@@ -2,12 +2,10 @@
 import { loadChainSdk } from "@/lib/blockchain/loadChainSdk";
 import { NODE_URL, CHAIN_ID, FEES, toWavelets } from "./config";
 
-/** Canonical dynamic loader for @waves/waves-transactions (loaded after globals). */
 export async function loadTransactionsSdk() {
   return loadChainSdk("kross", "@waves/waves-transactions");
 }
 
-/** Dynamic loader for @waves/ts-lib-crypto. */
 export async function loadCryptoSdk() {
   return loadChainSdk("kross", "@waves/ts-lib-crypto");
 }
@@ -76,7 +74,6 @@ export async function transferKSS(
   return result;
 }
 
-/** Broadcast a pre-signed transaction and wait for confirmation. */
 export async function broadcastTx(signedTx: unknown, nodeUrl: string = NODE_URL) {
   const { broadcast, waitForTx } = await loadTransactionsSdk();
   const result = await broadcast(signedTx as any, nodeUrl);
@@ -84,14 +81,32 @@ export async function broadcastTx(signedTx: unknown, nodeUrl: string = NODE_URL)
   return result;
 }
 
-/**
- * Resolve the managed seed for the unlocked session, gated by password.
- * Seed material is decrypted ONLY inside this SDK/session layer and never
- * returned to React components.
- */
 export async function getSeedFromPassword(password: string): Promise<string> {
   const { getSessionSeed } = await import("./session");
   const seed = await getSessionSeed(password);
   if (!seed) throw new Error("Unable to unlock wallet: invalid password or no active session");
   return seed;
+}
+
+/**
+ * Sign an arbitrary data string with the active managed seed.
+ * Returns the base58 signature, public key and address so callers (e.g. the
+ * off-chain category store) can authenticate against Edge Functions.
+ * Seed material is read only inside this SDK layer.
+ */
+export async function signAuthData(
+  data: string,
+  password: string,
+): Promise<{ signature: string; publicKey: string; address: string }> {
+  const { getSessionSeed } = await import("./session");
+  const seed = await getSessionSeed(password);
+  if (!seed) throw new Error("Wallet is locked — unlock to sign.");
+  const crypto = await loadCryptoSdk();
+  const bytes = crypto.stringToBytes(data);
+  const sig = crypto.signBytes(seed, bytes);
+  return {
+    signature: typeof sig === "string" ? sig : crypto.base58Encode(sig),
+    publicKey: crypto.publicKey(seed),
+    address: crypto.address(seed, CHAIN_ID),
+  };
 }

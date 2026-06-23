@@ -1,5 +1,5 @@
 // src/lib/blockchain/kross/marketplace-admin.ts
-import { KROSS_CONFIG } from './deployed.config';
+import { KROSS_CONFIG } from './marketplace.config';
 import type { KrossSigner } from './signer';
 
 const { MARKETPLACE_DAPP } = KROSS_CONFIG;
