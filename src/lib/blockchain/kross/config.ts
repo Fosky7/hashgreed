@@ -1,30 +1,54 @@
 // src/lib/blockchain/kross/config.ts
-import DEPLOYED_CONFIG from "./deployed.config";
+import DEPLOYED_CONFIG from './deployed.config';
+
+export const KSS_DECIMALS = 8;
+export const KSS_FACTOR = 100_000_000; // 10^8 wavelets per KSS
+
+const deployedMarketplaceAddress =
+  (DEPLOYED_CONFIG.contracts as ReadonlyArray<{ name?: string; address?: string }>)
+    .find((c) => c?.name?.toLowerCase().includes('marketplace'))?.address ??
+  (DEPLOYED_CONFIG as unknown as { dAppAddress?: string }).dAppAddress ??
+  '';
 
 export const KROSS_CONFIG = {
-  chain: "kross",
-  chainId: "N",
-  nodeUrl: "https://nodes.krossexplorer.com",
-  explorerUrl: "https://krossexplorer.com",
-  addressPrefix: "3K",
-  nativeCoin: { name: "Kross", symbol: "KSS", decimals: 8 },
-  language: "RIDE",
+  chain: 'kross',
+  chainId: 'N',
+  nodeUrl: 'https://nodes.krossexplorer.com',
+  nodeUrls: ['https://nodes.krossexplorer.com', 'https://nodes2.krossexplorer.com', 'https://nodes3.krossexplorer.com'],
+  explorerUrl: 'https://krossexplorer.com',
+  apiUrl: 'https://krossexplorer.com/api',
+  addressPrefix: '3K',
+  nativeCoin: 'KSS',
+  nativeCoinInfo: { name: 'Kross', symbol: 'KSS', decimals: KSS_DECIMALS },
+  unit: KSS_FACTOR,
+  language: 'RIDE',
+  marketplaceDApp: deployedMarketplaceAddress,
+  fees: {
+    transfer: 0.001,
+    invoke: 0.005,
+    updateNFTPrice: 0.005,
+    issueNFT: 0.001,
+    issueAsset: 1,
+  },
 } as const;
 
 export const NODE_URL = KROSS_CONFIG.nodeUrl;
 export const CHAIN_ID = KROSS_CONFIG.chainId;
 export const EXPLORER_URL = KROSS_CONFIG.explorerUrl;
-export const KSS_DECIMALS = 8;
-export const KSS_FACTOR = 100_000_000; // 10^8 wavelets per KSS
+export const API_URL = KROSS_CONFIG.apiUrl;
 
 // Marketplace config — derived from the read-only deployed config.
-// Pulls the marketplace dApp address from contracts[] when present.
 export const MARKETPLACE_CONFIG = {
   ...KROSS_CONFIG,
-  dAppAddress:
-    (DEPLOYED_CONFIG.contracts as ReadonlyArray<{ name?: string; address?: string }>)
-      .find((c) => c?.name?.toLowerCase().includes("marketplace"))?.address ?? "",
+  dAppAddress: deployedMarketplaceAddress,
   contracts: DEPLOYED_CONFIG.contracts,
+  functions: {
+    list: 'listNFT',
+    buy: 'buyNFT',
+    updateNFTPrice: 'updateNFTPrice',
+    cancel: 'cancelListing',
+    delist: 'delist',
+  },
 } as const;
 
 export const FEES = {
@@ -38,14 +62,14 @@ export const FEES = {
 
 /** Convert KSS (human units) -> wavelets (integer base units). */
 export function toWavelets(amountKSS: number | string): number {
-  const n = typeof amountKSS === "string" ? Number(amountKSS) : amountKSS;
+  const n = typeof amountKSS === 'string' ? Number(amountKSS) : amountKSS;
   if (!Number.isFinite(n)) throw new Error(`Invalid KSS amount: ${amountKSS}`);
   return Math.round(n * KSS_FACTOR);
 }
 
 /** Convert wavelets (integer base units) -> KSS (human units). */
 export function fromWavelets(wavelets: number | string): number {
-  const n = typeof wavelets === "string" ? Number(wavelets) : wavelets;
+  const n = typeof wavelets === 'string' ? Number(wavelets) : wavelets;
   if (!Number.isFinite(n)) throw new Error(`Invalid wavelets amount: ${wavelets}`);
   return n / KSS_FACTOR;
 }
