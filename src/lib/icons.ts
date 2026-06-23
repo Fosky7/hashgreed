@@ -1,15 +1,14 @@
 // src/lib/icons.ts
-// Self-contained SVG icon set — NO external dependency, NO JSX.
+// Self-contained SVG icon set with zero external dependencies and no JSX.
 //
-// Why React.createElement instead of JSX:
-//  - This file has a .ts extension; the preview/esbuild transformer only parses
-//    JSX in .tsx files, so JSX here fails with "Expected '>' but found '{'".
-//  - Using React.createElement keeps the file valid plain TypeScript while
-//    preserving the lucide-compatible API: every export is a component
-//    accepting { className?: string } (and any SVG props) and inherits color
-//    via stroke="currentColor".
-//  - Import icons from "@/lib/icons" everywhere. To add an icon, follow the
-//    same pattern with the SVG child elements.
+// Notes:
+//  - This file has a .ts extension, so it must NOT contain JSX. We build every
+//    icon with React.createElement, which is valid plain TypeScript.
+//  - Do NOT write package names or backticks in comments here. A build-time
+//    import scanner reads this file and can mistake quoted/backticked tokens in
+//    comments for real imports, then try to install them and break the shell.
+//  - Public API: every export is a component accepting an optional className
+//    and any SVG props, and inherits color via stroke set to currentColor.
 
 import { createElement, type ReactNode, type SVGProps } from "react";
 
@@ -32,7 +31,7 @@ function svg(children: ReactNode[]) {
 const el = (tag: string, attrs: Record<string, unknown>) =>
   createElement(tag, { key: JSON.stringify(attrs), ...attrs });
 
-/* ---- Wallet dashboard ---- */
+/* Wallet dashboard */
 export const Copy = svg([
   el("rect", { width: 14, height: 14, x: 8, y: 8, rx: 2, ry: 2 }),
   el("path", { d: "M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" }),
@@ -53,7 +52,7 @@ export const Shield = svg([
   }),
 ]);
 
-/* ---- Recent transactions ---- */
+/* Recent transactions */
 export const ArrowDownLeft = svg([
   el("line", { x1: 17, y1: 7, x2: 7, y2: 17 }),
   el("polyline", { points: "17 17 7 17 7 7" }),
@@ -92,7 +91,7 @@ export const Inbox = svg([
   }),
 ]);
 
-/* ---- Common UI ---- */
+/* Common UI */
 export const Search = svg([
   el("circle", { cx: 11, cy: 11, r: 8 }),
   el("path", { d: "m21 21-4.3-4.3" }),
