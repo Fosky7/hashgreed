@@ -1,7 +1,7 @@
 // src/components/marketplace/MarketplaceGrid.tsx
 import { useMarketplace } from '../../hooks/useMarketplace';
 import type { KrossSigner } from '../../lib/blockchain/kross/signer';
-import { KROSS_CONFIG } from '../../lib/blockchain/kross/deployed.config';
+import { KROSS_CONFIG } from '../../lib/blockchain/kross/marketplace.config';
 import { ListingCard } from './ListingCard';
 
 export function MarketplaceGrid({ signer }: { signer: KrossSigner | null }) {
