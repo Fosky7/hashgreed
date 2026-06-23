@@ -1,0 +1,85 @@
+// src/data/movieCategories.ts
+import type { MovieCategory } from "@/types/movie";
+
+export const movieCategories: MovieCategory[] = [
+  {
+    id: "action",
+    name: "Action",
+    icon: "💥",
+    coverImage:
+      "https://gtbwpdlebllwrfzgvwfl.supabase.co/storage/v1/object/public/project-assets/5f928b6f-e98b-4b5f-a7ea-25e0082af39e/assets/cat-action.png",
+    itemCount: 1284,
+    trending: true,
+    description: "High-octane chases, explosions and heroes who never quit.",
+  },
+  {
+    id: "comedy",
+    name: "Comedy",
+    icon: "😂",
+    coverImage:
+      "https://gtbwpdlebllwrfzgvwfl.supabase.co/storage/v1/object/public/project-assets/5f928b6f-e98b-4b5f-a7ea-25e0082af39e/assets/cat-comedy.png",
+    itemCount: 932,
+    trending: false,
+    description: "Laugh-out-loud stories and feel-good moments.",
+  },
+  {
+    id: "drama",
+    name: "Drama",
+    icon: "🎭",
+    coverImage:
+      "https://gtbwpdlebllwrfzgvwfl.supabase.co/storage/v1/object/public/project-assets/5f928b6f-e98b-4b5f-a7ea-25e0082af39e/assets/cat-drama.png",
+    itemCount: 1576,
+    trending: true,
+    description: "Emotional, character-driven tales that stay with you.",
+  },
+  {
+    id: "sci-fi",
+    name: "Sci-Fi",
+    icon: "🚀",
+    coverImage:
+      "https://gtbwpdlebllwrfzgvwfl.supabase.co/storage/v1/object/public/project-assets/5f928b6f-e98b-4b5f-a7ea-25e0082af39e/assets/cat-scifi.png",
+    itemCount: 845,
+    trending: true,
+    description: "Futuristic worlds, space travel and bold ideas.",
+  },
+  {
+    id: "horror",
+    name: "Horror",
+    icon: "👻",
+    coverImage:
+      "https://gtbwpdlebllwrfzgvwfl.supabase.co/storage/v1/object/public/project-assets/5f928b6f-e98b-4b5f-a7ea-25e0082af39e/assets/cat-horror.png",
+    itemCount: 612,
+    trending: false,
+    description: "Spine-chilling thrills and things that go bump in the night.",
+  },
+  {
+    id: "romance",
+    name: "Romance",
+    icon: "❤️",
+    coverImage:
+      "https://gtbwpdlebllwrfzgvwfl.supabase.co/storage/v1/object/public/project-assets/5f928b6f-e98b-4b5f-a7ea-25e0082af39e/assets/cat-drama.png",
+    itemCount: 738,
+    trending: false,
+    description: "Heartfelt love stories and unforgettable connections.",
+  },
+  {
+    id: "animation",
+    name: "Animation",
+    icon: "🎨",
+    coverImage:
+      "https://gtbwpdlebllwrfzgvwfl.supabase.co/storage/v1/object/public/project-assets/5f928b6f-e98b-4b5f-a7ea-25e0082af39e/assets/cat-action.png",
+    itemCount: 1021,
+    trending: true,
+    description: "Colorful, imaginative worlds for all ages.",
+  },
+  {
+    id: "documentary",
+    name: "Documentary",
+    icon: "🎥",
+    coverImage:
+      "https://gtbwpdlebllwrfzgvwfl.supabase.co/storage/v1/object/public/project-assets/5f928b6f-e98b-4b5f-a7ea-25e0082af39e/assets/cat-drama.png",
+    itemCount: 489,
+    trending: false,
+    description: "True stories that inform, inspire and amaze.",
+  },
+];
