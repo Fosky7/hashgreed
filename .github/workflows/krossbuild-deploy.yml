@@ -178,10 +178,20 @@ jobs:
               if (spec.startsWith('node:')) continue;
               const parts = spec.split('/');
               const name = spec.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0];
-              if (!name || known.has(name) || builtins.has(name)) continue;
+              if (!name || builtins.has(name)) continue;
+              // Heal even DECLARED packages: if a dep is listed in package.json
+              // but bun install never actually wrote it to node_modules (bad
+              // version, registry hiccup, externalized), Rollup still can't
+              // resolve it. Only skip when it is physically present on disk.
               if (fs.existsSync(path.join('node_modules', name))) continue;
               missing.add(name);
             }
+          }
+          // Always guarantee the core UI deps that generated code relies on,
+          // even if a hand-edited package.json or vite config dropped them.
+          const CORE = ['lucide-react', 'clsx', 'tailwind-merge', 'class-variance-authority'];
+          for (const c of CORE) {
+            if (!fs.existsSync(path.join('node_modules', c))) missing.add(c);
           }
           const list = [...missing];
           if (!list.length) { console.log('No missing imports detected.'); process.exit(0); }
