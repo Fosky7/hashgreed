@@ -225,10 +225,10 @@ jobs:
             };
             const readCallString = (start) => {
               let i = start;
-              while (/s/.test(src[i] || '')) i++;
+              while (/\s/.test(src[i] || '')) i++;
               if (src[i] !== '(') return null;
               i++;
-              while (/s/.test(src[i] || '')) i++;
+              while (/\s/.test(src[i] || '')) i++;
               if (src[i] !== '"' && src[i] !== "'") return null;
               const q = src[i++];
               let value = '', esc = false;
@@ -246,15 +246,13 @@ jobs:
               if (c === '"' || c === "'" || c === String.fromCharCode(96)) { i = skipString(i); continue; }
               if (startsWord(i, 'import')) {
                 const stmt = src.slice(i, i + 1600);
-                const m = stmt.match(/^imports+(?:types+)?(?:[^;]*?s+froms*)?['"]([^'"
-]+)['"]/s);
+                const m = stmt.match(/^import\s+(?:type\s+)?(?:[^;]*?\s+from\s*)?['"]([^'"\n]+)['"]/s);
                 if (m) specs.add(m[1]);
                 const call = readCallString(i + 'import'.length);
                 if (call) { specs.add(call.value); i = call.end; }
               } else if (startsWord(i, 'export')) {
                 const stmt = src.slice(i, i + 1600);
-                const m = stmt.match(/^exports+(?:types+)?[^;]*?s+froms*['"]([^'"
-]+)['"]/s);
+                const m = stmt.match(/^export\s+(?:type\s+)?[^;]*?\s+from\s*['"]([^'"\n]+)['"]/s);
                 if (m) specs.add(m[1]);
               } else if (startsWord(i, 'require')) {
                 const call = readCallString(i + 'require'.length);
@@ -403,4 +401,4 @@ jobs:
             --data @failure.json || true
           echo "Reported build failure (with logs) to KrossBuild."
 
-# KrossBuild workflow reindex: 2026-06-23T16:43:37.641Z
+# KrossBuild workflow reindex: 2026-06-23T17:46:16.375Z
