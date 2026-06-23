@@ -377,3 +377,5 @@ jobs:
             -H "Content-Type: application/json" \
             --data @failure.json || true
           echo "Reported build failure (with logs) to KrossBuild."
+
+# KrossBuild workflow reindex: 2026-06-23T16:06:56.493Z
