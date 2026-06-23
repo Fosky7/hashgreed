@@ -1,5 +1,6 @@
 // src/components/wallet/RecentTransactions.tsx
 import { useEffect, useState, useCallback, useMemo } from "react";
+import type { ComponentType } from "react";
 import {
   ArrowDownLeft,
   ArrowUpRight,
@@ -7,7 +8,7 @@ import {
   ExternalLink,
   RefreshCw,
   Inbox,
-} from "lucide-react";
+} from "@/lib/icons";
 import {
   fetchRecentTransactions,
   type NormalizedTx,
@@ -48,9 +49,11 @@ function timeAgo(ts: number) {
   return `${d}d ago`;
 }
 
+type IconType = ComponentType<{ className?: string }>;
+
 const META: Record<
   NormalizedTx["kind"],
-  { label: string; icon: typeof ArrowDownLeft; ring: string; bg: string; text: string }
+  { label: string; icon: IconType; ring: string; bg: string; text: string }
 > = {
   received: {
     label: "Received",
@@ -250,7 +253,7 @@ export function RecentTransactions({ address, pollMs = 30000, refreshKey = 0 }: 
                 <div
                   className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ring-1 ${meta.bg} ${meta.ring}`}
                 >
-                  <Icon className={`h-4.5 w-4.5 ${meta.text}`} />
+                  <Icon className={`h-[18px] w-[18px] ${meta.text}`} />
                 </div>
 
                 <div className="min-w-0 flex-1">
