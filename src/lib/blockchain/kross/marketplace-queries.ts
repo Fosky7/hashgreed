@@ -1,294 +1,119 @@
 // src/lib/blockchain/kross/marketplace-queries.ts
 //
-// MARKETPLACE LISTINGS READ MODULE (READ) for the Kross Marketplace dApp.
-// -----------------------------------------------------------------------------
-// This unit is the chain-query layer the marketplace UI calls to fetch ACTIVE
-// listings, prices, sellers and NFT ownership. It is READ-ONLY:
-//
-//   1. Read every account-data state entry under the marketplace dApp address
-//      from the indexed Kross Explorer API (NEVER an RPC write node).
-//   2. Parse the per-asset listing keys written by kross-marketplace.ride
-//      (`listing_<assetId>_price` / `listing_<assetId>_seller`, or a single
-//      packed `listing_<assetId>` value) into a normalized intermediate.
-//   3. Enrich each listing with NFT asset metadata (name, image, issuer =
-//      creator) via the asset-details endpoint.
-//   4. Return a stable `Listing[]` the UI (ListingCard, sale + api modules)
-//      already consumes. Transient endpoint failures NEVER throw -> [].
-//
-// It REUSES the resilient endpoint config in ./config.ts. It does NOT build,
-// sign or broadcast anything (that is the WRITE units' job).
-import './polyfills';
-import { fromWavelets } from './config';
-import { MARKETPLACE_CONFIG, MARKETPLACE_PARAMS } from './deployed.config';
+// Read-only marketplace queries against the LIVE Kross mainnet node. These read
+// the dApp data keys directly (no signing required).
 
-/* ------------------------------------------------------------------ *
- * Public types — the read contract the UI depends on.
- * ------------------------------------------------------------------ */
+import { KROSS_CONFIG, fromBaseUnits } from './config';
 
-/** A single active marketplace listing, normalized for the UI. */
 export interface Listing {
-  /** base58 NFT asset id. */
   assetId: string;
-  /** Seller (current escrow depositor / owner) base58 address. */
+  /** Price in whole KSS. */
+  price: number;
+  /** Seller / lister address. */
   seller: string;
-  /** Exact on-chain price in integer wavelets (money math source of truth). */
-  priceWavelets: number;
-  /** Human price in whole KSS (display). */
-  priceKSS: number;
-  /** NFT display name (from asset metadata). */
-  name: string;
-  /** NFT image URL when resolvable from metadata, else ''. */
-  imageUrl: string;
-  /** Asset issuer = creator address (royalty recipient). */
-  creator: string;
-  /** Optional listing category label. */
+  /** Category label. */
   category: string;
+  /** Whether the listing is currently active. */
+  active: boolean;
 }
 
-/** Marketplace fee/royalty parameters (basis points). */
-export interface MarketplaceFees {
-  feeBasisPoints: number;
-  royaltyBasisPoints: number;
-  feeWalletAddress: string;
+/** Build a data-key fetch URL for the dApp address. */
+function dataKeyUrl(dApp: string, key: string): string {
+  return `${KROSS_CONFIG.nodeUrl}/addresses/data/${dApp}/${encodeURIComponent(key)}`;
 }
 
-/* ------------------------------------------------------------------ *
- * Endpoint resolution (indexed READ API, with failover).
- * ------------------------------------------------------------------ */
-
-function apiBases(): string[] {
-  const c = KROSS_CONFIG as unknown as Record<string, unknown>;
-  const out: string[] = [];
-  const push = (v: unknown) => {
-    if (typeof v === 'string' && v) out.push(v.replace(/\/$/, ''));
-  };
-  push(c.apiUrl);
-  if (Array.isArray(c.apiUrls)) (c.apiUrls as unknown[]).forEach(push);
-  if (Array.isArray(c.nodeUrls)) (c.nodeUrls as unknown[]).forEach(push);
-  push(c.nodeUrl);
-  // Fallback to the known indexed Explorer API base.
-  if (out.length === 0) out.push('https://krossexplorer.com/api');
-  return Array.from(new Set(out));
-}
-
-async function fetchJson<T>(paths: string[]): Promise<T | null> {
-  for (const base of apiBases()) {
-    for (const path of paths) {
-      try {
-        const res = await fetch(`${base}${path}`, {
-          headers: { accept: 'application/json' },
-        });
-        if (!res.ok) continue;
-        return (await res.json()) as T;
-      } catch {
-        // try next path / base
-      }
-    }
+async function readKey<T = unknown>(
+  dApp: string,
+  key: string
+): Promise<T | null> {
+  try {
+    const res = await fetch(dataKeyUrl(dApp, key));
+    if (!res.ok) return null;
+    const body = (await res.json()) as { value: T };
+    return body.value;
+  } catch {
+    return null;
   }
-  return null;
-}
-
-/* ------------------------------------------------------------------ *
- * State-entry reading + parsing.
- * ------------------------------------------------------------------ */
-
-interface DataEntry {
-  key: string;
-  type?: string;
-  value: string | number | boolean;
-}
-
-/** Read ALL data entries stored under the marketplace dApp account. */
-async function readDataEntries(dApp: string): Promise<DataEntry[]> {
-  // Node/Explorer addresses-data shapes vary; try the common ones.
-  const raw = await fetchJson<unknown>([
-    `/addresses/data/${dApp}`,
-    `/v1/addresses/${dApp}/data`,
-    `/address/${dApp}/data`,
-  ]);
-  if (!raw) return [];
-  const arr = Array.isArray(raw)
-    ? raw
-    : Array.isArray((raw as { data?: unknown[] }).data)
-    ? (raw as { data: unknown[] }).data
-    : [];
-  return (arr as DataEntry[]).filter(
-    (e) => e && typeof e.key === 'string'
-  );
-}
-
-/** Intermediate listing parsed from raw state, before metadata enrichment. */
-interface RawListing {
-  assetId: string;
-  priceWavelets: number;
-  seller: string;
-  category: string;
 }
 
 /**
- * Parse listing keys written by kross-marketplace.ride. Supports both layouts:
- *   - split:  listing_<assetId>_price (int) + listing_<assetId>_seller (string)
- *   - packed: listing_<assetId> = "<seller>:<priceWavelets>[:<category>]"
- * Only entries with a positive price AND a seller are treated as ACTIVE.
+ * Fetch a single listing by assetId so the UI can pre-fill the current price
+ * and verify the connected wallet is the lister before allowing an update.
+ * Returns null when no (active) listing exists.
  */
-function parseListings(entries: DataEntry[]): RawListing[] {
-  const byAsset = new Map<string, RawListing>();
-  const ensure = (assetId: string): RawListing => {
-    let r = byAsset.get(assetId);
-    if (!r) {
-      r = { assetId, priceWavelets: 0, seller: '', category: '' };
-      byAsset.set(assetId, r);
-    }
-    return r;
-  };
+export async function getListing(assetId: string): Promise<Listing | null> {
+  const dApp = KROSS_CONFIG.marketplaceDApp;
+  if (!dApp || !assetId) return null;
 
-  for (const e of entries) {
-    if (!e.key.startsWith('listing_')) continue;
-    const rest = e.key.slice('listing_'.length);
-
-    if (rest.endsWith('_price')) {
-      const assetId = rest.slice(0, -'_price'.length);
-      const n = Number(e.value);
-      if (Number.isFinite(n) && n > 0) ensure(assetId).priceWavelets = n;
-    } else if (rest.endsWith('_seller')) {
-      const assetId = rest.slice(0, -'_seller'.length);
-      if (typeof e.value === 'string' && e.value) ensure(assetId).seller = e.value;
-    } else if (rest.endsWith('_category')) {
-      const assetId = rest.slice(0, -'_category'.length);
-      if (typeof e.value === 'string') ensure(assetId).category = e.value;
-    } else if (typeof e.value === 'string' && e.value.includes(':')) {
-      // packed layout: listing_<assetId> = seller:price[:category]
-      const [seller, price, category = ''] = e.value.split(':');
-      const n = Number(price);
-      if (seller && Number.isFinite(n) && n > 0) {
-        const r = ensure(rest);
-        r.seller = seller;
-        r.priceWavelets = n;
-        r.category = category;
-      }
-    }
-  }
-
-  return Array.from(byAsset.values()).filter(
-    (r) => r.priceWavelets > 0 && r.seller.length > 0
-  );
-}
-
-/* ------------------------------------------------------------------ *
- * NFT asset metadata enrichment (name, image, issuer/creator).
- * ------------------------------------------------------------------ */
-
-interface AssetDetails {
-  name?: string;
-  description?: string;
-  issuer?: string;
-  // Some indexers expose parsed image/url fields; fall back to description.
-  image?: string;
-  url?: string;
-}
-
-function extractImage(d: AssetDetails): string {
-  const candidate = d.image || d.url || '';
-  if (candidate && /^(https?:|ipfs:|data:)/i.test(candidate)) return candidate;
-  // Try to recover an image URL embedded in the description.
-  const m = (d.description || '').match(/https?:\/\/\S+\.(?:png|jpe?g|gif|webp|svg)/i);
-  return m ? m[0] : '';
-}
-
-async function fetchAssetDetails(assetId: string): Promise<AssetDetails | null> {
-  return fetchJson<AssetDetails>([
-    `/assets/details/${assetId}`,
-    `/v1/assets/${assetId}`,
-    `/asset/${assetId}`,
+  const base = `listing_${assetId}`;
+  const [active, priceRaw, seller, category] = await Promise.all([
+    readKey<boolean>(dApp, `${base}_active`),
+    readKey<number>(dApp, `${base}_price`),
+    readKey<string>(dApp, `${base}_seller`),
+    readKey<string>(dApp, `${base}_category`),
   ]);
-}
 
-async function enrich(raw: RawListing): Promise<Listing> {
-  const details = (await fetchAssetDetails(raw.assetId)) || {};
+  // No listing data at all -> not found.
+  if (priceRaw == null && seller == null) return null;
+
   return {
-    assetId: raw.assetId,
-    seller: raw.seller,
-    priceWavelets: raw.priceWavelets,
-    priceKSS: fromWavelets(raw.priceWavelets),
-    name: details.name || `NFT ${raw.assetId.slice(0, 6)}…`,
-    imageUrl: extractImage(details),
-    creator: details.issuer || raw.seller,
-    category: raw.category,
+    assetId,
+    price: priceRaw != null ? fromBaseUnits(priceRaw) : 0,
+    seller: seller ?? '',
+    category: category ?? '',
+    active: active === true,
   };
 }
 
-/* ------------------------------------------------------------------ *
- * In-memory cache (short TTL) so the UI can poll cheaply. Invalidated
- * by the WRITE units after a sale/list/cancel (invalidateListingsCache).
- * ------------------------------------------------------------------ */
-
-const CACHE_TTL_MS = 15_000;
-let cache: { at: number; data: Listing[] } | null = null;
-
-/** Drop the cached listings so the next read hits the chain. */
-export function invalidateListingsCache(): void {
-  cache = null;
+/**
+ * List all categories known to the marketplace dApp. Reads the `categories`
+ * index key if present; returns an empty array when unconfigured.
+ */
+export async function getCategories(): Promise<string[]> {
+  const dApp = KROSS_CONFIG.marketplaceDApp;
+  if (!dApp) return [];
+  const raw = await readKey<string>(dApp, 'categories');
+  if (!raw) return [];
+  return raw
+    .split(',')
+    .map((c) => c.trim())
+    .filter(Boolean);
 }
 
-/* ================================================================== *
- * PUBLIC READ API.
- * ================================================================== */
-
 /**
- * Fetch all ACTIVE marketplace listings with prices, sellers, NFT metadata and
- * ownership. Never throws on transient endpoint failure -> returns []. Results
- * are cached briefly; call invalidateListingsCache() after a mutating tx.
+ * Fetch all listings for a given category. Uses the node's data regex search to
+ * collect matching keys, then assembles Listing objects.
  */
-export async function getListings(): Promise<Listing[]> {
-  if (cache && Date.now() - cache.at < CACHE_TTL_MS) return cache.data;
-
-  const dApp = MARKETPLACE_CONFIG.dAppAddress as string;
-  if (!dApp || dApp.startsWith('<') || dApp.includes('BASE58')) {
-    return [];
-  }
+export async function getListingsByCategory(
+  category: string
+): Promise<Listing[]> {
+  const dApp = KROSS_CONFIG.marketplaceDApp;
+  if (!dApp || !category) return [];
 
   try {
-    const entries = await readDataEntries(dApp);
-    const raw = parseListings(entries);
-    const data = await Promise.all(raw.map(enrich));
-    // Stable order: cheapest first, then by assetId for determinism.
-    data.sort((a, b) =>
-      a.priceWavelets - b.priceWavelets || a.assetId.localeCompare(b.assetId)
+    // Pull all `listing_*_category` entries and match the requested category.
+    const res = await fetch(
+      `${KROSS_CONFIG.nodeUrl}/addresses/data/${dApp}?matches=${encodeURIComponent(
+        'listing_.*_category'
+      )}`
     );
-    cache = { at: Date.now(), data };
-    return data;
+    if (!res.ok) return [];
+    const entries = (await res.json()) as Array<{ key: string; value: string }>;
+
+    const wanted = category.toLowerCase();
+    const assetIds = entries
+      .filter((e) => (e.value ?? '').toLowerCase() === wanted)
+      .map((e) => {
+        const m = e.key.match(/^listing_(.+)_category$/);
+        return m ? m[1] : null;
+      })
+      .filter((x): x is string => !!x);
+
+    const listings = await Promise.all(assetIds.map((id) => getListing(id)));
+    return listings.filter(
+      (l): l is Listing => !!l && l.active
+    );
   } catch {
-    return cache?.data ?? [];
+    return [];
   }
-}
-
-/** Fetch a single active listing by assetId, or null. */
-export async function getListing(assetId: string): Promise<Listing | null> {
-  const all = await getListings();
-  return all.find((l) => l.assetId === assetId) ?? null;
-}
-
-/** Distinct, sorted category labels present across active listings. */
-export async function getCategories(): Promise<string[]> {
-  const all = await getListings();
-  const set = new Set<string>();
-  for (const l of all) if (l.category) set.add(l.category);
-  return Array.from(set).sort((a, b) => a.localeCompare(b));
-}
-
-/** Active listings filtered to one category (case-insensitive). */
-export async function getListingsByCategory(category: string): Promise<Listing[]> {
-  const want = (category ?? '').trim().toLowerCase();
-  const all = await getListings();
-  if (!want) return all;
-  return all.filter((l) => l.category.toLowerCase() === want);
-}
-
-/** Read the marketplace fee/royalty parameters (from deployed config). */
-export async function getMarketplaceFees(): Promise<MarketplaceFees> {
-  return {
-    feeBasisPoints: MARKETPLACE_PARAMS.feeBasisPoints,
-    royaltyBasisPoints: MARKETPLACE_PARAMS.royaltyBasisPoints,
-    feeWalletAddress: MARKETPLACE_PARAMS.feeWalletAddress,
-  };
 }
