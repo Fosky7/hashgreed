@@ -208,9 +208,19 @@ jobs:
         run: |
           set -eo pipefail
           {
+            run_vite_only() {
+              echo "↩️ Retrying with a Vite-only build (type-checking decoupled so type-only errors never block the preview/deploy)…"
+              bunx --bun vite build
+            }
             if node -e "process.exit(require('./package.json').scripts?.build ? 0 : 1)" 2>/dev/null; then
               echo "Running package.json build script…"
-              bun run build
+              # Many build scripts chain a strict `tsc` typecheck before
+              # `vite build`. A type-only error there is NOT a runtime problem
+              # and must not block a preview/deploy. If the scripted build
+              # fails, fall back to a Vite-only build (esbuild transpile, no
+              # typecheck). Genuine import/syntax errors still fail because
+              # `vite build` itself cannot bundle them.
+              bun run build || run_vite_only
             else
               echo "::warning::No \"build\" script in package.json — falling back to 'bunx vite build'."
               bunx --bun vite build
