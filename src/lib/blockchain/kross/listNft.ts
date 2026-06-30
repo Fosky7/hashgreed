@@ -1,41 +1,43 @@
 // src/lib/blockchain/kross/listNft.ts
-import { loadChainSdk } from "../loadChainSdk";
-import { MARKETPLACE_DAPP } from "./deployed.config";
+import { loadChainSdk } from '../loadChainSdk';
+import { MARKETPLACE_CONFIG, KROSS_CONFIG } from './marketplace.config';
 
-const NODE_URL = "https://nodes.krossexplorer.com";
-const CHAIN_ID = "N"; // Kross
+export interface ListNftParams {
+  assetId: string;
+  priceKSS: number;
+  royaltyPercent: number; // reserved for future royalty enforcement
+  seed: string;
+}
 
 /**
- * Escrow an NFT into the marketplace via invokeScript.
- * Contract call includes ONLY price + royalty — category is off-chain.
+ * Invoke the marketplace dApp's listNFT function.
+ * Transfers 1 unit of the NFT asset to the dApp as deposit.
  */
-export async function listNft(params: {
-  assetId: string;
-  priceKss: number;
-  royaltyPercent: number;
-  seed: string;
-}): Promise<{ id: string }> {
-  const { wavesTx } = await loadChainSdk("kross");
-  const { invokeScript, broadcast, waitForTx } = wavesTx;
+export async function listNft(params: ListNftParams) {
+  const { assetId, priceKSS, seed } = params;
+  const priceWavelets = Math.round(priceKSS * 1e8);
+
+  const { broadcast, invokeScript, waitForTx } = await loadChainSdk('kross');
+  const nodeUrl = KROSS_CONFIG.nodeUrl;
 
   const tx = invokeScript(
     {
-      dApp: MARKETPLACE_DAPP,
+      dApp: MARKETPLACE_CONFIG.dAppAddress,
       call: {
-        function: "listNFT",
+        function: MARKETPLACE_CONFIG.functions.list,
         args: [
-          { type: "integer", value: Math.round(params.priceKss * 1e8) },
-          { type: "integer", value: Math.round(params.royaltyPercent) },
+          { type: 'string', value: assetId },
+          { type: 'integer', value: priceWavelets },
         ],
       },
-      payment: [{ assetId: params.assetId, amount: 1 }], // escrow the NFT
-      chainId: CHAIN_ID,
-      fee: 500000,
+      payment: [{ assetId, amount: 1 }],
+      chainId: 'N',
+      fee: 100000,
     },
-    params.seed
+    seed,
   );
 
-  const sent = await broadcast(tx, NODE_URL);
-  await waitForTx(sent.id, { apiBase: NODE_URL });
-  return { id: sent.id };
+  await broadcast(tx, nodeUrl);
+  await waitForTx(tx.id, { apiBase: nodeUrl });
+  return { id: tx.id };
 }

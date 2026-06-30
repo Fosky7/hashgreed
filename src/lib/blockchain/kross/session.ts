@@ -2,6 +2,17 @@
 import { loadChainSdk } from "@/lib/blockchain/loadChainSdk";
 import { CHAIN_ID } from "./config";
 
+// Re-export server-session token helpers so consumers importing them from
+// "./session" resolve correctly at build time.
+export {
+  getStoredToken,
+  getStoredAddress,
+  storeSession,
+  clearSession,
+  validateSession,
+  revokeSession,
+} from "./session-tokens";
+
 type Listener = (state: SessionState) => void;
 
 export interface SessionState {
@@ -43,7 +54,6 @@ export async function storeEncryptedSeed(seedPhrase: string, password: string): 
   localStorage.setItem(STORAGE_KEY, cipher);
 }
 
-/** Unlock the session with a password. Returns true on success. */
 export async function unlock(password: string): Promise<boolean> {
   const seed = await getSessionSeed(password);
   return seed !== null;
