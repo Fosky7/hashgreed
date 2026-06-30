@@ -1,7 +1,7 @@
 // src/components/marketplace/MarketplaceGrid.tsx
 import { useMarketplace } from '../../hooks/useMarketplace';
 import type { KrossSigner } from '../../lib/blockchain/kross/signer';
-import { EXPLORER_URL, MARKETPLACE_CONFIG } from '../../lib/blockchain/kross/config';
+import { KROSS_CONFIG } from '../../lib/blockchain/kross/marketplace.config';
 import { ListingCard } from './ListingCard';
 
 export function MarketplaceGrid({ signer }: { signer: KrossSigner | null }) {
@@ -13,15 +13,13 @@ export function MarketplaceGrid({ signer }: { signer: KrossSigner | null }) {
         <h2>Kross NFT Marketplace</h2>
         <div className="mp__meta">
           <span className="mp__coin">Prices in KSS</span>
-          {MARKETPLACE_CONFIG.dAppAddress && (
-            <a
-              href={`${EXPLORER_URL}/address/${MARKETPLACE_CONFIG.dAppAddress}`}
-              target="_blank"
-              rel="noreferrer"
-            >
-              View dApp
-            </a>
-          )}
+          <a
+            href={`${KROSS_CONFIG.EXPLORER_URL}/address/${KROSS_CONFIG.MARKETPLACE_DAPP}`}
+            target="_blank"
+            rel="noreferrer"
+          >
+            View dApp
+          </a>
           <button onClick={() => void mp.refresh()} disabled={mp.loading}>
             {mp.loading ? 'Refreshing…' : 'Refresh'}
           </button>
