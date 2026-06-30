@@ -1,11 +1,12 @@
 // src/lib/blockchain/kross/marketplace-admin.ts
-import { MARKETPLACE_CONFIG } from './config';
+import { KROSS_CONFIG } from './marketplace.config';
 import type { KrossSigner } from './signer';
 
+const { MARKETPLACE_DAPP } = KROSS_CONFIG;
+
 function requireDapp(): string {
-  const dapp = MARKETPLACE_CONFIG.dAppAddress;
-  if (!dapp) throw new Error('Marketplace dApp address not configured');
-  return dapp;
+  if (!MARKETPLACE_DAPP) throw new Error('Marketplace dApp address not configured');
+  return MARKETPLACE_DAPP;
 }
 
 /** One-time init: caller becomes admin, sets fee wallet. init(feeWallet). */
