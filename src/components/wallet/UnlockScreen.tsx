@@ -1,6 +1,7 @@
 // src/components/wallet/UnlockScreen.tsx
 import { useState } from 'react';
 import { useKrossSession } from '@/lib/blockchain/kross/useSession';
+import { PasswordInput } from './PasswordInput';
 
 /**
  * Renders an unlock prompt when the wallet is locked.
@@ -21,13 +22,12 @@ export function UnlockScreen() {
       <p className="text-sm text-gray-500 text-center">
         Enter your password to unlock your Kross wallet for this session.
       </p>
-      <input
-        type="password"
+      <PasswordInput
         value={password}
         onChange={(e) => setPassword(e.target.value)}
         onKeyDown={(e) => e.key === 'Enter' && handle()}
         placeholder="Wallet password"
-        className="w-full p-3 rounded-xl border text-sm"
+        autoComplete="current-password"
       />
       {error && <p className="text-sm text-red-600">{error}</p>}
       <button
