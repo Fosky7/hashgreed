@@ -72,8 +72,11 @@ export function CreateWallet() {
 
     setBusy(true);
     try {
-      await saveWallet({ seedPhrase: seed, address }, password);
-      await unlockSession(password);
+      await saveWallet(seed, password);
+      const unlocked = await unlockSession(password);
+      if (!unlocked) {
+        throw new Error('Wallet was saved, but could not be unlocked. Please try your password again.');
+      }
       navigate('/wallet', { replace: true });
     } catch (e) {
       setError(

@@ -44,11 +44,14 @@ export function ImportWallet() {
     setBusy(true);
     try {
       // Validate the phrase and derive the address inside the SDK layer.
-      const wallet = await importKrossWallet(normalizedSeed);
+      await importKrossWallet(normalizedSeed);
       // Encrypt + persist the seed under the chosen password.
-      await saveWallet(wallet, password);
+      await saveWallet(normalizedSeed, password);
       // Auto-unlock for this session so signing works immediately.
-      await unlockSession(password);
+      const unlocked = await unlockSession(password);
+      if (!unlocked) {
+        throw new Error('Wallet was imported, but could not be unlocked. Please try your password again.');
+      }
       navigate('/wallet', { replace: true });
     } catch (e) {
       setError(
