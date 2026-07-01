@@ -72,7 +72,7 @@ export function CreateWallet() {
 
     setBusy(true);
     try {
-      await saveWallet(seed, password);
+      await saveWallet({ seedPhrase: seed, address }, password);
       await unlockSession(password);
       navigate('/wallet', { replace: true });
     } catch (e) {

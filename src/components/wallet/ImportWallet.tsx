@@ -44,9 +44,9 @@ export function ImportWallet() {
     setBusy(true);
     try {
       // Validate the phrase and derive the address inside the SDK layer.
-      await importKrossWallet(normalizedSeed);
+      const wallet = await importKrossWallet(normalizedSeed);
       // Encrypt + persist the seed under the chosen password.
-      await saveWallet(normalizedSeed, password);
+      await saveWallet(wallet, password);
       // Auto-unlock for this session so signing works immediately.
       await unlockSession(password);
       navigate('/wallet', { replace: true });
