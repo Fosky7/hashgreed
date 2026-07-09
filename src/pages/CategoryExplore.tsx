@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import Header from '../components/Header';
 import Footer from '../components/Footer';
+import BackButton from '../components/BackButton';
 import {
   getListingsByCategory,
   Listing,
@@ -34,6 +35,10 @@ export default function CategoryExplore() {
     <div className="min-h-screen flex flex-col bg-gradient-to-br from-[var(--background-start)] to-[var(--background-end)] transition-colors duration-300 ease-in-out">
       <Header />
       <main className="flex-grow container mx-auto px-4 py-8">
+        <div className="mb-4">
+          <BackButton to="/categories" label="Back to Categories" />
+        </div>
+
         <h1 className="text-3xl font-bold capitalize mb-1 text-[var(--text-primary)]">
           {category}
         </h1>
