@@ -1,4 +1,3 @@
-// tsconfig.node.json
 {
   "compilerOptions": {
     "target": "ES2022",
@@ -8,8 +7,13 @@
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
     "isolatedModules": true,
+    "moduleDetection": "force",
     "noEmit": true,
-    "strict": false
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedSideEffectImports": true
   },
-  "include": ["vite.config.ts", "tailwind.config.ts", "postcss.config.js"]
+  "include": ["vite.config.ts"]
 }
