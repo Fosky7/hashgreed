@@ -1,126 +1,131 @@
 // src/lib/blockchain/kross/session.ts
-import { loadChainSdk } from "@/lib/blockchain/loadChainSdk";
-import { CHAIN_ID } from "./config";
-
-// Re-export server-session token helpers so consumers importing them from
-// "./session" resolve correctly at build time.
-export {
-  getStoredToken,
-  getStoredAddress,
-  storeSession,
-  clearSession,
-  validateSession,
-  revokeSession,
-} from "./session-tokens";
-
-type Listener = (state: SessionState) => void;
+import {
+  getStoredAddress as getStoredWalletAddress,
+  hasWallet,
+  unlockWallet,
+} from './wallet-store';
+import {
+  getStoredToken as tokenGetStoredToken,
+  getStoredAddress as tokenGetStoredAddress,
+  storeSession as tokenStoreSession,
+  validateSession as tokenValidateSession,
+  revokeSession as tokenRevokeSession,
+  clearSession as clearTokenSession,
+} from './session-tokens';
 
 export interface SessionState {
   unlocked: boolean;
+  seed: string | null;
   address: string | null;
   publicKey: string | null;
 }
 
-const STORAGE_KEY = "kross_encrypted_seed";
+type SessionListener = (state: SessionState) => void;
 
-let _seed: string | null = null;
-let _state: SessionState = { unlocked: false, address: null, publicKey: null };
-const _listeners = new Set<Listener>();
+let sessionSeed: string | null = null;
+let sessionAddress: string | null = null;
+let sessionPublicKey: string | null = null;
 
-function emit() {
-  for (const l of _listeners) l(_state);
-}
+const listeners = new Set<SessionListener>();
 
-export function subscribe(listener: Listener): () => void {
-  _listeners.add(listener);
-  listener(_state);
-  return () => _listeners.delete(listener);
-}
+export const getStoredToken = tokenGetStoredToken;
+export const getStoredAddress = tokenGetStoredAddress;
+export const storeSession = tokenStoreSession;
+export const validateSession = tokenValidateSession;
+export const revokeSession = tokenRevokeSession;
 
 export function getState(): SessionState {
-  return _state;
+  return {
+    unlocked: Boolean(sessionSeed),
+    seed: sessionSeed,
+    address: sessionAddress ?? getStoredWalletAddress(),
+    publicKey: sessionPublicKey,
+  };
+}
+
+function emitSessionChange() {
+  const state = getState();
+  listeners.forEach((listener) => listener(state));
 }
 
 export function isUnlocked(): boolean {
-  return _state.unlocked && _seed !== null;
+  return Boolean(sessionSeed);
 }
 
-export function hasStoredWallet(): boolean {
-  return localStorage.getItem(STORAGE_KEY) !== null;
+export function getSessionSeed(): string | null {
+  return sessionSeed;
 }
 
-export async function storeEncryptedSeed(seedPhrase: string, password: string): Promise<void> {
-  const cipher = await encrypt(seedPhrase, password);
-  localStorage.setItem(STORAGE_KEY, cipher);
+export function getUnlockedSeed(): string | null {
+  return sessionSeed;
 }
 
-export async function unlock(password: string): Promise<boolean> {
-  const seed = await getSessionSeed(password);
-  return seed !== null;
+export function requireSessionSeed(): string {
+  if (!sessionSeed) {
+    throw new Error('Unlock your Kross wallet before signing transactions.');
+  }
+  return sessionSeed;
 }
 
-export async function getSessionSeed(password: string): Promise<string | null> {
-  if (_seed) return _seed;
-  const cipher = localStorage.getItem(STORAGE_KEY);
-  if (!cipher) return null;
+async function derivePublicKey(seed: string): Promise<string | null> {
   try {
-    const seed = await decrypt(cipher, password);
-    await activate(seed);
-    return seed;
+    const sdk = (await import('./sdk')) as any;
+    const crypto = await sdk.loadCryptoSdk?.();
+    return typeof crypto?.publicKey === 'function' ? crypto.publicKey(seed) : null;
   } catch {
     return null;
   }
 }
 
-async function activate(seedPhrase: string) {
-  const crypto = await loadChainSdk("kross", "@waves/ts-lib-crypto");
-  _seed = seedPhrase;
-  _state = {
-    unlocked: true,
-    address: crypto.address(seedPhrase, CHAIN_ID),
-    publicKey: crypto.publicKey(seedPhrase),
+export async function unlockSession(password: string): Promise<boolean> {
+  try {
+    const seed = await unlockWallet(password);
+    sessionSeed = seed;
+    sessionAddress = getStoredWalletAddress();
+    sessionPublicKey = await derivePublicKey(seed);
+    emitSessionChange();
+    return true;
+  } catch (error) {
+    console.warn('[kross/session] unlock failed', error);
+    sessionSeed = null;
+    sessionAddress = getStoredWalletAddress();
+    sessionPublicKey = null;
+    emitSessionChange();
+    return false;
+  }
+}
+
+export const unlock = unlockSession;
+
+export function lockSession(): void {
+  sessionSeed = null;
+  sessionAddress = getStoredWalletAddress();
+  sessionPublicKey = null;
+  emitSessionChange();
+}
+
+export const lock = lockSession;
+
+export function subscribeSession(listener: SessionListener): () => void {
+  listeners.add(listener);
+  listener(getState());
+  return () => {
+    listeners.delete(listener);
   };
-  emit();
 }
 
-export function lock(): void {
-  _seed = null;
-  _state = { unlocked: false, address: null, publicKey: null };
-  emit();
+export const subscribe = subscribeSession;
+export const onSessionChange = subscribeSession;
+
+export function getSessionSnapshot(): SessionState {
+  return getState();
 }
 
-async function deriveKey(password: string, salt: Uint8Array): Promise<CryptoKey> {
-  const enc = new TextEncoder();
-  const base = await crypto.subtle.importKey("raw", enc.encode(password), "PBKDF2", false, ["deriveKey"]);
-  return crypto.subtle.deriveKey(
-    { name: "PBKDF2", salt, iterations: 100_000, hash: "SHA-256" },
-    base,
-    { name: "AES-GCM", length: 256 },
-    false,
-    ["encrypt", "decrypt"],
-  );
+export function hasStoredWallet(): boolean {
+  return hasWallet();
 }
 
-async function encrypt(plaintext: string, password: string): Promise<string> {
-  const salt = crypto.getRandomValues(new Uint8Array(16));
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const key = await deriveKey(password, salt);
-  const ct = new Uint8Array(
-    await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, new TextEncoder().encode(plaintext)),
-  );
-  const out = new Uint8Array(salt.length + iv.length + ct.length);
-  out.set(salt, 0);
-  out.set(iv, salt.length);
-  out.set(ct, salt.length + iv.length);
-  return btoa(String.fromCharCode(...out));
-}
-
-async function decrypt(cipher: string, password: string): Promise<string> {
-  const raw = Uint8Array.from(atob(cipher), (c) => c.charCodeAt(0));
-  const salt = raw.slice(0, 16);
-  const iv = raw.slice(16, 28);
-  const ct = raw.slice(28);
-  const key = await deriveKey(password, salt);
-  const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ct);
-  return new TextDecoder().decode(pt);
+export function clearSession(): void {
+  clearTokenSession();
+  lockSession();
 }
