@@ -1,6 +1,6 @@
-# Hashgreed
+# Chopam
 
-The new nft marketplace for Hashgreed monetized solely using KSS
+A food ordering and delivery platform
 
 ## Getting Started
 
