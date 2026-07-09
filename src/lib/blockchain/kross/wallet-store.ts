@@ -1,7 +1,16 @@
 // src/lib/blockchain/kross/wallet-store.ts
-import { KrossWallet } from './sdk';
+import type { KrossWallet } from './sdk';
 
 const STORAGE_KEY = 'kross_wallet_v1';
+
+type SaveWalletInput =
+  | string
+  | KrossWallet
+  | {
+      seed?: string;
+      seedPhrase?: string;
+      address?: string;
+    };
 
 /**
  * Encrypt and persist the wallet. Only the encrypted seed is stored.
@@ -69,14 +78,33 @@ async function decryptSeed(encoded: string, password: string): Promise<string> {
   return dec.decode(plain);
 }
 
+function getSeedPhrase(wallet: SaveWalletInput): string {
+  if (typeof wallet === 'string') return wallet;
+  return wallet.seedPhrase ?? wallet.seed ?? '';
+}
+
+async function getWalletAddress(wallet: SaveWalletInput, seedPhrase: string): Promise<string> {
+  if (typeof wallet !== 'string' && wallet.address) return wallet.address;
+
+  const { importKrossWallet } = await import('./generate-wallet');
+  const derived = await importKrossWallet(seedPhrase);
+  return derived.address;
+}
+
 export async function saveWallet(
-  wallet: KrossWallet,
+  wallet: SaveWalletInput,
   password: string
 ): Promise<void> {
-  const encrypted = await encryptSeed(wallet.seedPhrase, password);
+  const seedPhrase = getSeedPhrase(wallet).trim().replace(/\s+/g, ' ');
+  if (!seedPhrase) {
+    throw new Error('Wallet seed phrase is missing.');
+  }
+
+  const address = await getWalletAddress(wallet, seedPhrase);
+  const encrypted = await encryptSeed(seedPhrase, password);
   localStorage.setItem(
     STORAGE_KEY,
-    JSON.stringify({ address: wallet.address, encrypted })
+    JSON.stringify({ address, encrypted })
   );
 }
 
