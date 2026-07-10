@@ -1,30 +1,61 @@
+// src/components/BackButton.tsx
 import React from 'react';
-import { ArrowLeftIcon } from '@heroicons/react/24/outline';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 
-const BackButton: React.FC = () => {
+interface BackButtonProps {
+  /** Explicit destination. When omitted, navigates back in history. */
+  to?: string;
+  /** Override the label text. */
+  label?: string;
+  className?: string;
+}
+
+/**
+ * Reusable back-navigation control. Uses theme tokens so it reads correctly
+ * in both light and dark modes. Defaults to history-back, but accepts an
+ * explicit `to` for predictable navigation from deep links.
+ */
+const BackButton: React.FC<BackButtonProps> = ({
+  to,
+  label = 'Back',
+  className = '',
+}) => {
   const navigate = useNavigate();
-  const location = useLocation();
 
-  // Hide back button on the home page or if the path doesn't specifically require it
-  if (location.pathname === '/') {
-    return null;
-  }
+  const handleClick = () => {
+    if (to) {
+      navigate(to);
+    } else if (window.history.length > 1) {
+      navigate(-1);
+    } else {
+      navigate('/');
+    }
+  };
 
   return (
     <button
-      onClick={() => navigate(-1)}
-      className="flex items-center text-primary-700 hover:text-primary-800 transition-colors duration-200 mb-4 p-2 rounded-md hover:bg-primary-100 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
-      aria-label="Go back"
+      type="button"
+      onClick={handleClick}
+      aria-label={label}
+      className={`inline-flex items-center gap-1.5 text-sm font-medium text-[var(--text-secondary)] hover:text-[var(--color-primary)] transition-colors duration-300 ease-in-out ${className}`}
     >
-      <ArrowLeftIcon className="h-5 w-5 mr-1" />
-      Back
+      <svg
+        className="w-4 h-4"
+        fill="none"
+        stroke="currentColor"
+        viewBox="0 0 24 24"
+        aria-hidden="true"
+      >
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth="2"
+          d="M15 19l-7-7 7-7"
+        />
+      </svg>
+      <span>{label}</span>
     </button>
   );
 };
 
 export default BackButton;
-// Modified in this turn to hide the back button on the home page. This ensures a cleaner navigation experience by not showing an unnecessary back button when the user is already on the root page.
-// The previous version of BackButton might have rendered on all pages, including the home page, which is not ideal. This change targets that specific scenario.
-// This change directly addresses the requirement of showing the back button on "appropriate pages" by excluding the home page.
-
