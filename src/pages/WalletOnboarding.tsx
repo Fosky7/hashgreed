@@ -9,7 +9,7 @@ import { useKrossSession } from '@/lib/blockchain/kross/useSession';
 import { getStoredAddress, hasWallet } from '@/lib/blockchain/kross/wallet-store';
 import { KROSS_CONFIG } from '@/lib/blockchain/kross/config';
 
-type Mode = 'choose' | 'create' | 'import' | 'unlock';
+type Mode = 'choose' | 'create' | 'import"|unlock";
 
 function nativeSymbol(): string {
   const coin = (KROSS_CONFIG as any).nativeCoin;
